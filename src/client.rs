@@ -51,10 +51,9 @@ pub fn build_client() -> WreqClient {
 	let emulation = [Emulation::Chrome145, Emulation::Firefox147];
 	let emulation_os = [EmulationOS::Android, EmulationOS::Windows];
 
-	let rand = fastrand::usize(..);
 	let emulation = EmulationOption::builder()
-		.emulation(emulation[rand % emulation.len()])
-		.emulation_os(emulation_os[rand % emulation_os.len()])
+		.emulation(*fastrand::choice(emulation.iter()).unwrap())
+		.emulation_os(*fastrand::choice(emulation_os.iter()).unwrap())
 		.build()
 		.emulation();
 
