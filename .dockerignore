@@ -1,3 +1,16 @@
-target
+.git
 .github
+.devcontainer
+target
 Dockerfile*
+*.md
+scripts/
+contrib/
+flake.*
+.envrc
+.replit
+app.json
+heroku.yml
+redlib.container
+seccomp-redlib.json
+rustfmt.toml
