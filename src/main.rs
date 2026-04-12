@@ -89,19 +89,23 @@ async fn resource(body: &str, content_type: &str, cache: bool) -> Result<Respons
 	Ok(res)
 }
 
-async fn style() -> Result<Response<Body>, String> {
+static STYLE_CSS: LazyLock<String> = LazyLock::new(|| {
 	let mut res = include_str!("../static/style.css").to_string();
 	for file in ThemeAssets::iter() {
 		res.push('\n');
 		let theme = ThemeAssets::get(file.as_ref()).unwrap();
 		res.push_str(std::str::from_utf8(theme.data.as_ref()).unwrap());
 	}
+	res
+});
+
+async fn style() -> Result<Response<Body>, String> {
 	Ok(
 		Response::builder()
 			.status(200)
 			.header("content-type", "text/css")
 			.header("Cache-Control", "public, max-age=1209600, s-maxage=86400")
-			.body(res.to_string().into())
+			.body(Body::from(STYLE_CSS.clone()))
 			.unwrap_or_default(),
 	)
 }

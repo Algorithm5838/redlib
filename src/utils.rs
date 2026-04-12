@@ -692,18 +692,20 @@ where
 #[include = "*.css"]
 pub struct ThemeAssets;
 
+static AVAILABLE_THEMES: LazyLock<Vec<String>> = LazyLock::new(|| {
+	let mut themes = vec!["system".to_string()];
+	for file in ThemeAssets::iter() {
+		let chunks: Vec<&str> = file.as_ref().split(".css").collect();
+		themes.push(chunks[0].to_owned());
+	}
+	themes
+});
+
 impl Preferences {
 	/// Build preferences from cookies
 	pub fn new(req: &Request<Body>) -> Self {
-		// Read available theme names from embedded css files.
-		// Always make the default "system" theme available.
-		let mut themes = vec!["system".to_string()];
-		for file in ThemeAssets::iter() {
-			let chunks: Vec<&str> = file.as_ref().split(".css").collect();
-			themes.push(chunks[0].to_owned());
-		}
 		Self {
-			available_themes: themes,
+			available_themes: AVAILABLE_THEMES.clone(),
 			theme: setting(req, "theme"),
 			front_page: setting(req, "front_page"),
 			layout: setting(req, "layout"),
