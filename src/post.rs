@@ -6,8 +6,9 @@ use crate::subreddit::{can_access_quarantine, quarantine};
 use crate::utils::{
 	error, format_num, nsfw_landing, param, parse_post, rewrite_emotes, setting, template, time, val, Author, Awards, Comment, Flair, FlairPart, Post, Preferences,
 };
+use hyper::{Request, Response};
+use crate::server::Body;
 use askama::Template;
-use hyper::{Body, Request, Response};
 use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;

@@ -1,22 +1,25 @@
-use crate::dbg_msg;
-use crate::oauth::{force_refresh_token, token_daemon, Oauth, OauthBackendImpl};
-use crate::server::RequestExt;
-use crate::utils::{format_url, Post};
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use futures_lite::future::block_on;
 use futures_lite::{future::Boxed, FutureExt};
-use hyper::{body::Buf, header, Body, Request as HyperRequest, Response as HyperResponse};
+use http_body_util::BodyExt;
+use hyper::{header, Method, Request, Response};
 use log::{error, info, trace, warn};
 use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
-use std::result::Result;
+use wreq::redirect::Policy;
+use wreq::{Client as WreqClient, EmulationFactory, header as wreq_header, Response as WreqResponse};
+use wreq_util::{Emulation, EmulationOS, EmulationOption};
+
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU16};
 use std::sync::LazyLock;
-use wreq::redirect::Policy;
-use wreq::{header as wreq_header, Client as WreqClient, EmulationFactory, Method, Response as WreqResponse};
-use wreq_util::{Emulation, EmulationOS, EmulationOption};
+use std::result::Result;
+
+use crate::dbg_msg;
+use crate::oauth::{force_refresh_token, token_daemon, Oauth, OauthBackendImpl};
+use crate::server::RequestExt;
+use crate::utils::{format_url, Post};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
 const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
@@ -66,21 +69,19 @@ pub fn build_client() -> WreqClient {
 		.expect("Should always be able to build a client")
 }
 
+use crate::server::{full, Body};
+
 /// Convert a wreq Response into a hyper Response<Body>.
-/// This bridge lets the rest of the codebase stay unchanged.
+/// wreq and hyper now both use http v1.x, so header types are directly compatible.
 trait IntoHyperResponse {
 	async fn into_hyper(self) -> Result<Response<Body>, String>;
 }
 
 impl IntoHyperResponse for wreq::Response {
 	async fn into_hyper(self) -> Result<Response<Body>, String> {
-		// wreq uses http v1.x; hyper uses http v0.2.x. Convert via primitives.
-		let status_u16 = self.status().as_u16();
-		let status = hyper::StatusCode::from_u16(status_u16).map_err(|e| e.to_string())?;
+		let status = self.status();
 
-		// Snapshot headers before consuming self (bytes() moves self).
-		// Use SmallVec-style stack storage: most responses have < 32 headers.
-		let mut builder = hyper::Response::builder().status(status);
+		let mut builder = hyper::Response::builder().status(status.as_u16());
 		for (k, v) in self.headers() {
 			// Skip headers that hyper rejects (e.g. non-ASCII bytes in CDN headers)
 			// rather than aborting the entire response.
@@ -100,7 +101,7 @@ impl IntoHyperResponse for wreq::Response {
 			h.insert(header::CONTENT_LENGTH, bytes.len().into());
 		}
 
-		builder.body(Body::from(bytes)).map_err(|e| e.to_string())
+		builder.body(full(bytes)).map_err(|e| e.to_string())
 	}
 }
 
@@ -191,7 +192,7 @@ pub async fn canonical_path(path: String, tries: i8) -> Result<Option<String>, S
 	}
 }
 
-pub async fn proxy(req: HyperRequest<Body>, format: &str) -> Result<HyperResponse<Body>, String> {
+pub async fn proxy(req: Request<Body>, format: &str) -> Result<Response<Body>, String> {
 	let mut url = format!("{format}?{}", req.uri().query().unwrap_or_default());
 
 	// For each parameter in request
@@ -221,30 +222,24 @@ pub async fn proxy(req: HyperRequest<Body>, format: &str) -> Result<HyperRespons
 	// This is needed or Reddit will redirect us to a /media landing page that just renders the image.
 	builder = builder.header(wreq_header::ACCEPT, "*/*");
 
-	builder
-		.send()
-		.await
-		.map(|mut res| {
-			let headers = res.headers_mut();
-
-			let mut rm = |key: &str| headers.remove(key);
-
-			rm("access-control-expose-headers");
-			rm("server");
-			rm("vary");
-			rm("etag");
-			rm("x-cdn");
-			rm("x-cdn-client-region");
-			rm("x-cdn-name");
-			rm("x-cdn-server-region");
-			rm("x-reddit-cdn");
-			rm("x-reddit-video-features");
-			rm("Nel");
-			rm("Report-To");
-
-			res.into_hyper_response()
-		})
-		.map_err(|e| e.to_string())
+	let mut res = builder.send().await.map_err(|e| e.to_string())?;
+	{
+		let headers = res.headers_mut();
+		let mut rm = |key: &str| headers.remove(key);
+		rm("access-control-expose-headers");
+		rm("server");
+		rm("vary");
+		rm("etag");
+		rm("x-cdn");
+		rm("x-cdn-client-region");
+		rm("x-cdn-name");
+		rm("x-cdn-server-region");
+		rm("x-reddit-cdn");
+		rm("x-reddit-video-features");
+		rm("Nel");
+		rm("Report-To");
+	}
+	res.into_hyper().await
 }
 
 /// Makes a GET request to Reddit at `path`. By default, this will honor HTTP
@@ -399,13 +394,12 @@ pub async fn json(path: String, quarantine: bool) -> Result<Value, String> {
 				None
 			};
 
-			// asynchronously aggregate the chunks of the body
-			match hyper::body::aggregate(response.into_hyper_response()).await {
-				Ok(body) => {
-					let has_remaining = body.has_remaining();
+			// Collect the body bytes
+			match response.collect().await {
+				Ok(collected) => {
+					let body_bytes = collected.to_bytes();
 
-					if !has_remaining {
-						// Rate limited, so spawn a force_refresh_token()
+					if body_bytes.is_empty() {
 						tokio::spawn(force_refresh_token());
 						return match reset {
 							Some(val) => Err(format!(
@@ -416,8 +410,7 @@ pub async fn json(path: String, quarantine: bool) -> Result<Value, String> {
 						};
 					}
 
-					// Parse the response from Reddit as JSON
-					match serde_json::from_reader(body.reader()) {
+					match serde_json::from_slice(&body_bytes) {
 						Ok(value) => {
 							let json: Value = value;
 
@@ -513,34 +506,6 @@ pub async fn rate_limit_check() -> Result<(), String> {
 	Ok(())
 }
 
-trait IntoHyperResponse {
-	fn into_hyper_response(self) -> HyperResponse<Body>;
-}
-
-impl IntoHyperResponse for WreqResponse {
-	fn into_hyper_response(self) -> HyperResponse<Body> {
-		let status = self.status();
-		let version = self.version();
-
-		let mut builder = HyperResponse::builder().status(status.as_u16()).version(match version {
-			wreq::Version::HTTP_09 => hyper::Version::HTTP_09,
-			wreq::Version::HTTP_10 => hyper::Version::HTTP_10,
-			wreq::Version::HTTP_11 => hyper::Version::HTTP_11,
-			wreq::Version::HTTP_2 => hyper::Version::HTTP_2,
-			wreq::Version::HTTP_3 => hyper::Version::HTTP_3,
-			_ => hyper::Version::HTTP_11,
-		});
-
-		for (name, value) in self.headers() {
-			builder = builder.header(
-				header::HeaderName::from_bytes(name.as_str().as_bytes()).unwrap(),
-				header::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
-			);
-		}
-
-		builder.body(Body::wrap_stream(self.bytes_stream())).unwrap()
-	}
-}
 
 #[cfg(test)]
 mod tests {

@@ -2,18 +2,17 @@
 #![allow(clippy::cmp_owned)]
 
 use brotli::enc::{BrotliCompress, BrotliEncoderParams};
+use bytes::Bytes;
 use cached::proc_macro::cached;
 use cookie::Cookie;
 use core::f64;
 use futures_lite::{future::Boxed, Future, FutureExt};
-use hyper::{
-	body,
-	body::HttpBody,
-	header,
-	service::{make_service_fn, service_fn},
-	HeaderMap,
-};
-use hyper::{Body, Method, Request, Response, Server as HyperServer};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use std::convert::Infallible;
+use hyper::body::Incoming;
+use hyper::service::service_fn;
+use hyper::{header, HeaderMap, Method, Request, Response};
+use hyper_util::rt::TokioIo;
 use libflate::gzip;
 use route_recognizer::{Params, Router};
 use std::{
@@ -24,10 +23,25 @@ use std::{
 	result::Result,
 	str::{from_utf8, Split},
 	string::ToString,
+	sync::Arc,
 };
 use time::OffsetDateTime;
+use tokio::net::TcpListener;
 
 use crate::{config, dbg_msg};
+
+/// The unified body type used for all responses.
+pub type Body = BoxBody<Bytes, Infallible>;
+
+/// Create a response body from a string or bytes.
+pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
+	Full::new(chunk.into()).boxed()
+}
+
+/// Create an empty response body.
+pub fn empty() -> Body {
+	Empty::<Bytes>::new().boxed()
+}
 
 const BANNED_USER_AGENTS: &[&str] = &[
 	"AI2Bot",
@@ -118,6 +132,7 @@ const BANNED_USER_AGENTS: &[&str] = &[
 	"wpbot",
 ];
 
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 type BoxResponse = Pin<Box<dyn Future<Output = Result<Response<Body>, String>> + Send>>;
 
 /// Compressors for the response Body, in ascending order of preference.
@@ -210,10 +225,6 @@ pub trait ResponseExt {
 impl RequestExt for Request<Body> {
 	fn params(&self) -> Params {
 		self.extensions().get::<Params>().unwrap_or(&Params::new()).clone()
-		// self.extensions()
-		// 	.get::<RequestMeta>()
-		// 	.and_then(|meta| meta.route_params())
-		// 	.expect("Routerify: No RouteParams added while processing request")
 	}
 
 	fn param(&self, name: &str) -> Option<String> {
@@ -310,106 +321,128 @@ impl Server {
 		}
 	}
 
-	pub fn listen(self, addr: &str) -> Boxed<Result<(), hyper::Error>> {
-		let make_svc = make_service_fn(move |_conn| {
-			// For correct borrowing, these values need to be borrowed
-			let router = self.router.clone();
-			let default_headers = self.default_headers.clone();
+	pub fn listen(self, addr: &str) -> Boxed<Result<(), Box<dyn std::error::Error + Send + Sync>>> {
+		let addr = addr.to_owned();
+		let router = Arc::new(self.router);
+		let default_headers = Arc::new(self.default_headers);
 
-			// This is the `Service` that will handle the connection.
-			// `service_fn` is a helper to convert a function that
-			// returns a Response into a `Service`.
-			// let shared_router = router.clone();
-			async move {
-				Ok::<_, String>(service_fn(move |req: Request<Body>| {
-					let req_headers = req.headers().clone();
-					let def_headers = default_headers.clone();
+		async move {
+			let address: std::net::SocketAddr = addr.parse().unwrap_or_else(|_| panic!("Cannot parse {addr} as address (example format: 0.0.0.0:8080)"));
+			let listener = TcpListener::bind(address).await?;
 
-					// Catch robots.txt-disrespecful bots who still identify themselves
-					// Typically justified as "human triggered" actions.
-					if match config::get_setting("REDLIB_ROBOTS_DISABLE_INDEXING") {
-						Some(val) => val == "on",
-						None => false,
-					} {
-						if let Some(user_agent) = req_headers.get("user-agent") {
-							if let Ok(user_agent_str) = user_agent.to_str() {
-								for banned in BANNED_USER_AGENTS {
-									if user_agent_str.contains(banned) {
-										return new_boilerplate(def_headers, req_headers, 403, Body::from("Forbidden")).boxed();
-									}
-								}
-							}
-						}
+			// Graceful shutdown signal
+			let shutdown = async {
+				#[cfg(windows)]
+				tokio::signal::ctrl_c().await.expect("Failed to install CTRL+C signal handler");
+
+				#[cfg(unix)]
+				{
+					let mut signal_terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("Failed to install SIGTERM signal handler");
+					tokio::select! {
+						_ = tokio::signal::ctrl_c() => (),
+						_ = signal_terminate.recv() => ()
 					}
+				}
+			};
 
-					// Remove double slashes and decode encoded slashes
-					let mut path = req.uri().path().replace("//", "/").replace("%2F", "/");
+			tokio::pin!(shutdown);
 
-					// Remove trailing slashes
-					if path != "/" && path.ends_with('/') {
-						path.pop();
-					}
-
-					// Replace HEAD with GET for routing
-					let (method, is_head) = match req.method() {
-						&Method::HEAD => (&Method::GET, true),
-						method => (method, false),
-					};
-
-					// Match the visited path with an added route
-					match router.recognize(&format!("/{}{}", method.as_str(), path)) {
-						// If a route was configured for this path
-						Ok(found) => {
-							let mut parammed = req;
-							parammed.set_params(found.params().clone());
-
-							// Run the route's function
-							let func = (found.handler().to_owned().to_owned())(parammed);
-							async move {
-								match func.await {
-									Ok(mut res) => {
-										res.headers_mut().extend(def_headers);
-										if is_head {
-											*res.body_mut() = Body::empty();
-										} else {
-											let _ = compress_response(&req_headers, &mut res).await;
-										}
-
-										Ok(res)
-									}
-									Err(msg) => new_boilerplate(def_headers, req_headers, 500, if is_head { Body::empty() } else { Body::from(msg) }).await,
-								}
-							}
-							.boxed()
-						}
-						// If there was a routing error
-						Err(e) => new_boilerplate(def_headers, req_headers, 404, if is_head { Body::empty() } else { e.into() }).boxed(),
-					}
-				}))
-			}
-		});
-
-		// Build SocketAddr from provided address
-		let address = &addr.parse().unwrap_or_else(|_| panic!("Cannot parse {addr} as address (example format: 0.0.0.0:8080)"));
-
-		// Bind server to address specified above. Gracefully shut down if CTRL+C is pressed
-		let server = HyperServer::bind(address).serve(make_svc).with_graceful_shutdown(async {
-			#[cfg(windows)]
-			// Wait for the CTRL+C signal
-			tokio::signal::ctrl_c().await.expect("Failed to install CTRL+C signal handler");
-
-			#[cfg(unix)]
-			{
-				// Wait for CTRL+C or SIGTERM signals
-				let mut signal_terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("Failed to install SIGTERM signal handler");
+			loop {
 				tokio::select! {
-					_ = tokio::signal::ctrl_c() => (),
-					_ = signal_terminate.recv() => ()
+					Ok((stream, _)) = listener.accept() => {
+						let io = TokioIo::new(stream);
+						let router = Arc::clone(&router);
+						let default_headers = Arc::clone(&default_headers);
+
+						tokio::task::spawn(async move {
+							let router: Arc<Router<fn(Request<Body>) -> BoxResponse>> = Arc::clone(&router);
+							let svc = service_fn(move |req: Request<Incoming>| {
+								let router = Arc::clone(&router);
+								let default_headers = Arc::clone(&default_headers);
+
+								async move {
+									// Convert Incoming body to our Body type
+									let (parts, incoming) = req.into_parts();
+									let body_bytes = match incoming.collect().await {
+										Ok(collected) => collected.to_bytes(),
+										Err(_) => return Ok(Response::builder().status(500).body(empty()).unwrap()),
+									};
+									let req: Request<Body> = Request::from_parts(parts, full(body_bytes));
+
+									let req_headers = req.headers().clone();
+									let def_headers = (*default_headers).clone();
+
+									// Catch robots.txt-disrespectful bots who still identify themselves
+									if match config::get_setting("REDLIB_ROBOTS_DISABLE_INDEXING") {
+										Some(val) => val == "on",
+										None => false,
+									} {
+										if let Some(user_agent) = req_headers.get("user-agent") {
+											if let Ok(user_agent_str) = user_agent.to_str() {
+												for banned in BANNED_USER_AGENTS {
+													if user_agent_str.contains(banned) {
+														return Ok(new_boilerplate(def_headers, req_headers, 403, full("Forbidden"))
+															.await
+															.unwrap_or_else(|_| Response::builder().status(403).body(empty()).unwrap()));
+													}
+												}
+											}
+										}
+									}
+
+									// Remove double slashes and decode encoded slashes
+									let mut path = req.uri().path().replace("//", "/").replace("%2F", "/");
+
+									// Remove trailing slashes
+									if path != "/" && path.ends_with('/') {
+										path.pop();
+									}
+
+									// Replace HEAD with GET for routing
+									let (method, is_head) = match req.method() {
+										&Method::HEAD => (&Method::GET, true),
+										method => (method, false),
+									};
+
+									// Match the visited path with an added route
+									let res: Result<Response<Body>, String> = match router.recognize(&format!("/{}{}", method.as_str(), path)) {
+										Ok(found) => {
+											let mut parammed = req;
+											parammed.set_params(found.params().clone());
+
+											let func = (found.handler().to_owned().to_owned())(parammed);
+											match func.await {
+												Ok(mut res) => {
+													res.headers_mut().extend(def_headers.clone());
+													if is_head {
+														*res.body_mut() = empty();
+													} else {
+														let _ = compress_response(&req_headers, &mut res).await;
+													}
+													Ok(res)
+												}
+												Err(msg) => new_boilerplate(def_headers, req_headers, 500, if is_head { empty() } else { full(msg) }).await,
+											}
+										}
+										Err(e) => new_boilerplate(def_headers, req_headers, 404, if is_head { empty() } else { full(e) }).await,
+									};
+
+									Ok::<Response<Body>, hyper::Error>(res.unwrap_or_else(|_| Response::builder().status(500).body(empty()).unwrap()))
+								}
+							});
+
+							if let Err(_err) = hyper::server::conn::http1::Builder::new().serve_connection(io, svc).await {
+								dbg_msg!("Error serving connection: {_err}");
+							}
+						});
+					}
+					_ = &mut shutdown => break,
 				}
 			}
-		});
 
-		server.boxed()
+			Ok(())
+		}
+		.boxed()
 	}
 }
 
@@ -424,7 +457,6 @@ async fn new_boilerplate(
 	match Response::builder().status(status).body(body) {
 		Ok(mut res) => {
 			let _ = compress_response(&req_headers, &mut res).await;
-
 			res.headers_mut().extend(default_headers.clone());
 			Ok(res)
 		}
@@ -453,22 +485,6 @@ fn determine_compressor(accept_encoding: String) -> Option<CompressionType> {
 		return None;
 	};
 
-	// Keep track of the compressor candidate based on both the client's
-	// preference and our own. Concrete examples:
-	//
-	// 1. "Accept-Encoding: gzip, br" => assuming we like brotli more than
-	//    gzip, and the browser supports brotli, we choose brotli
-	//
-	// 2. "Accept-Encoding: gzip;q=0.8, br;q=0.3" => the client has stated a
-	//    preference for gzip over brotli, so we choose gzip
-	//
-	// To do this, we need to define a struct which contains the requested
-	// requested compressor (abstracted as a CompressionType enum) and the
-	// q-value. If no q-value is defined for the compressor, we assume one of
-	// 1.0. We first compare compressor candidates by comparing q-values, and
-	// then CompressionTypes. We keep track of whatever is the greatest per our
-	// ordering.
-
 	struct CompressorCandidate {
 		alg: CompressionType,
 		q: f64,
@@ -476,9 +492,6 @@ fn determine_compressor(accept_encoding: String) -> Option<CompressionType> {
 
 	impl Ord for CompressorCandidate {
 		fn cmp(&self, other: &Self) -> Ordering {
-			// Compare q-values. Break ties with the
-			// CompressionType values.
-
 			match self.q.total_cmp(&other.q) {
 				Ordering::Equal => self.alg.cmp(&other.alg),
 				ord => ord,
@@ -500,52 +513,25 @@ fn determine_compressor(accept_encoding: String) -> Option<CompressionType> {
 
 	impl Eq for CompressorCandidate {}
 
-	// This is the current candidate.
-	//
-	// Assmume no candidate so far. We do this by assigning the sentinel value
-	// of negative infinity to the q-value. If this value is negative infinity,
-	// that means there was no viable compressor candidate.
 	let mut cur_candidate = CompressorCandidate {
 		alg: CompressionType::Passthrough,
 		q: f64::NEG_INFINITY,
 	};
 
-	// This loop reads the requested compressors and keeps track of whichever
-	// one has the highest priority per our heuristic.
 	for val in accept_encoding.split(',') {
 		let mut q: f64 = 1.0;
-
-		// The compressor and q-value (if the latter is defined)
-		// will be delimited by semicolons.
 		let mut spl: Split<'_, char> = val.split(';');
 
-		// Get the compressor. For example, in
-		//   gzip;q=0.8
-		// this grabs "gzip" in the string. It
-		// will further validate the compressor against the
-		// list of those we support. If it is not supported,
-		// we move onto the next one.
 		let compressor: CompressionType = match spl.next() {
-			// CompressionType::parse will return the appropriate enum given
-			// a string. For example, it will return CompressionType::Gzip
-			// when given "gzip".
 			Some(s) => match CompressionType::parse(s.trim()) {
 				Some(candidate) => candidate,
-
-				// We don't support the requested compression algorithm.
 				None => continue,
 			},
-
-			// We should never get here, but I'm paranoid.
 			None => continue,
 		};
 
-		// Get the q-value. This might not be defined, in which case assume
-		// 1.0.
 		if let Some(s) = spl.next() {
 			if !(s.len() > 2 && s.starts_with("q=")) {
-				// If the q-value is malformed, the header is malformed, so
-				// abort.
 				return None;
 			}
 
@@ -554,23 +540,15 @@ fn determine_compressor(accept_encoding: String) -> Option<CompressionType> {
 					if (0.0..=1.0).contains(&val) {
 						q = val;
 					} else {
-						// If the value is outside [0..1], header is malformed.
-						// Abort.
 						return None;
 					};
 				}
 				Err(_) => {
-					// If this isn't a f64, then assume a malformed header
-					// value and abort.
 					return None;
 				}
 			}
 		};
 
-		// If new_candidate > cur_candidate, make new_candidate the new
-		// cur_candidate. But do this safely! It is very possible that
-		// someone gave us the string "NAN", which (&str).parse::<f64>
-		// will happily translate to f64::NAN.
 		let new_candidate = CompressorCandidate { alg: compressor, q };
 		if let Some(ord) = new_candidate.partial_cmp(&cur_candidate) {
 			if ord == Ordering::Greater {
@@ -586,35 +564,13 @@ fn determine_compressor(accept_encoding: String) -> Option<CompressionType> {
 	}
 }
 
-/// Compress the response body, if possible or desirable. The Body will be
-/// compressed in place, and a new header Content-Encoding will be set
-/// indicating the compression algorithm.
-///
-/// This function deems Body eligible compression if and only if the following
-/// conditions are met:
-///
-/// 1. the HTTP client requests a compression encoding in the Content-Encoding
-///    header (hence the need for the `req_headers`);
-///
-/// 2. the content encoding corresponds to a compression algorithm we support;
-///
-/// 3. the Media type in the Content-Type response header is text with any
-///    subtype (e.g. text/plain) or application/json.
-///
-/// `compress_response` returns Ok on successful compression, or if not all three
-/// conditions above are met. It returns Err if there was a problem decoding
-/// any header in either `req_headers` or res, but res will remain intact.
-///
-/// This function logs errors to stderr, but only in debug mode. No information
-/// is logged in release builds.
+/// Compress the response body, if possible or desirable.
 async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &mut Response<Body>) -> Result<(), String> {
 	// Check if the data is eligible for compression.
 	if let Some(hdr) = res.headers().get(header::CONTENT_TYPE) {
 		match from_utf8(hdr.as_bytes()) {
 			Ok(val) => {
 				let s = val.to_string();
-
-				// TODO: better determination of what is eligible for compression
 				if !(s.starts_with("text/") || s.starts_with("application/json")) {
 					return Ok(());
 				};
@@ -625,31 +581,19 @@ async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &m
 			}
 		};
 	} else {
-		// Response declares no Content-Type. Assume for simplicity that it
-		// cannot be compressed.
 		return Ok(());
 	};
 
-	// Don't bother if the size of the size of the response body will fit
-	// within an IP frame (less the bytes that make up the TCP/IP and HTTP
-	// headers).
-	if res.body().size_hint().lower() < 1452 {
-		return Ok(());
-	};
-
-	// Check to see which compressor is requested, and if we can use it.
+	// Check the accept-encoding header
 	let accept_encoding: String = match req_headers.get(header::ACCEPT_ENCODING) {
-		None => return Ok(()), // Client requested no compression.
-
+		None => return Ok(()),
 		Some(hdr) => match String::from_utf8(hdr.as_bytes().into()) {
 			Ok(val) => val,
-
 			#[cfg(debug_assertions)]
 			Err(e) => {
 				dbg_msg!(e);
 				return Ok(());
 			}
-
 			#[cfg(not(debug_assertions))]
 			Err(_) => return Ok(()),
 		},
@@ -660,29 +604,28 @@ async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &m
 		None => return Ok(()),
 	};
 
-	// Get the body from the response.
-	let body_bytes: Vec<u8> = match body::to_bytes(res.body_mut()).await {
-		Ok(b) => b.to_vec(),
-		Err(e) => {
-			dbg_msg!(e);
-			return Err(e.to_string());
-		}
+	// Collect the body bytes
+	let body_bytes: Vec<u8> = {
+		// Swap body with empty, collect old body
+		let old_body = std::mem::replace(res.body_mut(), empty());
+		// Body error type is Infallible, so unwrap is safe
+		old_body.collect().await.unwrap().to_bytes().to_vec()
 	};
+
+	// Don't bother compressing tiny responses
+	if body_bytes.len() < 1452 {
+		*res.body_mut() = full(body_bytes);
+		return Ok(());
+	}
 
 	// Compress!
 	match compress_body(compressor, body_bytes) {
 		Ok(compressed) => {
-			// We get here iff the compression was successful. Replace the body
-			// with the compressed payload, and add the appropriate
-			// Content-Encoding header in the response. Remove any precomputed
-			// Content-Length, as it will no longer be valid.
 			let headers = res.headers_mut();
 			headers.insert(header::CONTENT_ENCODING, compressor.to_string().parse().unwrap());
 			headers.remove(header::CONTENT_LENGTH);
-
-			*(res.body_mut()) = Body::from(compressed);
+			*res.body_mut() = full(compressed);
 		}
-
 		Err(e) => return Err(e),
 	}
 
@@ -690,18 +633,9 @@ async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &m
 }
 
 /// Compresses a `Vec<u8>` given a [`CompressionType`].
-///
-/// This is a helper function for [`compress_response`] and should not be
-/// called directly.
-
-// I've chosen a TTL of 600 (== 10 minutes) since compression is
-// computationally expensive and we don't want to be doing it often. This is
-// larger than client::json's TTL, but that's okay, because if client::json
-// returns a new serde_json::Value, body_bytes changes, so this function will
-// execute again.
+// TTL of 600 (== 10 minutes) since compression is computationally expensive.
 #[cached(size = 100, time = 600, result = true)]
 fn compress_body(compressor: CompressionType, body_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
-	// io::Cursor implements io::Read, required for our encoders.
 	let mut reader = io::Cursor::new(body_bytes);
 
 	let compressed: Vec<u8> = match compressor {
@@ -730,10 +664,7 @@ fn compress_body(compressor: CompressionType, body_bytes: Vec<u8>) -> Result<Vec
 		}
 
 		CompressionType::Brotli => {
-			// We may want to make the compression parameters configurable
-			// in the future. For now, the defaults are sufficient.
 			let brotli_params = BrotliEncoderParams::default();
-
 			let mut compressed = Vec::<u8>::new();
 			match BrotliCompress(&mut reader, &mut compressed, &brotli_params) {
 				Ok(_) => compressed,
@@ -744,11 +675,8 @@ fn compress_body(compressor: CompressionType, body_bytes: Vec<u8>) -> Result<Vec
 			}
 		}
 
-		// This arm is for any requested compressor for which we don't yet
-		// have an implementation.
 		CompressionType::Passthrough => {
-			let msg = "unsupported compressor".to_string();
-			return Err(msg);
+			return Err("unsupported compressor".to_string());
 		}
 	};
 
@@ -765,25 +693,20 @@ mod tests {
 
 	#[test]
 	fn test_determine_compressor() {
-		// Single compressor given.
 		assert_eq!(determine_compressor("unsupported".to_string()), None);
 		assert_eq!(determine_compressor("gzip".to_string()), Some(CompressionType::Gzip));
 		assert_eq!(determine_compressor("*".to_string()), Some(DEFAULT_COMPRESSOR));
 
-		// Multiple compressors.
 		assert_eq!(determine_compressor("gzip, br".to_string()), Some(CompressionType::Brotli));
 		assert_eq!(determine_compressor("gzip;q=0.8, br;q=0.3".to_string()), Some(CompressionType::Gzip));
 		assert_eq!(determine_compressor("br, gzip".to_string()), Some(CompressionType::Brotli));
 		assert_eq!(determine_compressor("br;q=0.3, gzip;q=0.4".to_string()), Some(CompressionType::Gzip));
 
-		// Invalid q-values.
 		assert_eq!(determine_compressor("gzip;q=NAN".to_string()), None);
 	}
 
 	#[test]
 	fn test_compress_response() {
-		// This macro generates an Accept-Encoding header value given any number of
-		// compressors.
 		macro_rules! ae_gen {
 			($x:expr) => {
 				$x.to_string().as_str()
@@ -800,33 +723,26 @@ mod tests {
 			ae_gen!(CompressionType::Brotli, CompressionType::Gzip),
 			ae_gen!(CompressionType::Brotli),
 		] {
-			// Determine what the expected encoding should be based on both the
-			// specific encodings we accept.
 			let expected_encoding: CompressionType = match determine_compressor(accept_encoding.to_string()) {
 				Some(s) => s,
 				None => panic!("determine_compressor(accept_encoding.to_string()) => None"),
 			};
 
-			// Build headers with our Accept-Encoding.
 			let mut req_headers = HeaderMap::new();
 			req_headers.insert(header::ACCEPT_ENCODING, header::HeaderValue::from_str(accept_encoding).unwrap());
 
-			// Build test response.
 			let lorem_ipsum: String = lipsum(10000);
 			let expected_lorem_ipsum = Vec::<u8>::from(lorem_ipsum.as_str());
 			let mut res = Response::builder()
 				.status(200)
 				.header(header::CONTENT_TYPE, "text/plain")
-				.body(Body::from(lorem_ipsum))
+				.body(full(lorem_ipsum))
 				.unwrap();
 
-			// Perform the compression.
 			if let Err(e) = block_on(compress_response(&req_headers, &mut res)) {
 				panic!("compress_response(&req_headers, &mut res) => Err(\"{e}\")");
 			};
 
-			// If the content was compressed, we expect the Content-Encoding
-			// header to be modified.
 			assert_eq!(
 				res
 					.headers()
@@ -837,13 +753,8 @@ mod tests {
 				expected_encoding.to_string()
 			);
 
-			// Decompress body and make sure it's equal to what we started
-			// with.
-			//
-			// In the case of no compression, just make sure the "new" body in
-			// the Response is the same as what with which we start.
-			let body_vec = match block_on(body::to_bytes(res.body_mut())) {
-				Ok(b) => b.to_vec(),
+			let body_vec = match block_on(res.into_body().collect()) {
+				Ok(b) => b.to_bytes().to_vec(),
 				Err(e) => panic!("{e}"),
 			};
 
@@ -852,19 +763,14 @@ mod tests {
 				continue;
 			}
 
-			// This provides an io::Read for the underlying body.
 			let mut body_cursor: io::Cursor<Vec<u8>> = io::Cursor::new(body_vec);
 
-			// Match the appropriate decompresor for the given
-			// expected_encoding.
 			let mut decoder: Box<dyn io::Read> = match expected_encoding {
 				CompressionType::Gzip => match gzip::Decoder::new(&mut body_cursor) {
 					Ok(dgz) => Box::new(dgz),
 					Err(e) => panic!("{e}"),
 				},
-
 				CompressionType::Brotli => Box::new(BrotliDecompressor::new(body_cursor, expected_lorem_ipsum.len())),
-
 				_ => panic!("no decompressor for {expected_encoding}"),
 			};
 

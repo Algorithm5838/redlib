@@ -8,7 +8,8 @@ use crate::{config, utils};
 use askama::Template;
 use cookie::Cookie;
 use htmlescape::decode_html;
-use hyper::{Body, Request, Response};
+use hyper::{Request, Response};
+use crate::server::{full, Body};
 
 use chrono::DateTime;
 use regex::Regex;
@@ -206,7 +207,7 @@ pub fn quarantine(req: &Request<Body>, sub: String, restriction: &str) -> Respon
 	Response::builder()
 		.status(403)
 		.header("content-type", "text/html")
-		.body(wall.render().unwrap_or_default().into())
+		.body(full(wall.render().unwrap_or_default()))
 		.unwrap_or_default()
 }
 
@@ -642,7 +643,7 @@ pub async fn rss(req: Request<Body>) -> Result<Response<Body>, String> {
 	let body = channel.to_string().into_bytes();
 
 	// Create the HTTP response
-	let mut res = Response::new(Body::from(body));
+	let mut res = Response::new(full(body));
 	res.headers_mut().insert(CONTENT_TYPE, hyper::header::HeaderValue::from_static("application/rss+xml"));
 
 	Ok(res)

@@ -5,7 +5,8 @@ use crate::config::{self, get_setting};
 use crate::{client::json, server::RequestExt};
 use askama::Template;
 use cookie::Cookie;
-use hyper::{Body, Request, Response};
+use hyper::{Request, Response};
+use crate::server::{full, Body};
 use libflate::deflate::{Decoder, Encoder};
 use log::error;
 use regex::Regex;
@@ -1280,7 +1281,7 @@ pub fn template(t: &impl Template) -> Response<Body> {
 	Response::builder()
 		.status(200)
 		.header("content-type", "text/html")
-		.body(t.render().unwrap_or_default().into())
+		.body(full(t.render().unwrap_or_default()))
 		.unwrap_or_default()
 }
 
@@ -1289,7 +1290,7 @@ pub fn redirect(path: &str) -> Response<Body> {
 		.status(302)
 		.header("content-type", "text/html")
 		.header("Location", path)
-		.body(format!("Redirecting to <a href=\"{path}\">{path}</a>...").into())
+		.body(full(format!("Redirecting to <a href=\"{path}\">{path}</a>...")))
 		.unwrap_or_default()
 }
 
@@ -1305,7 +1306,7 @@ pub async fn error(req: Request<Body>, msg: &str) -> Result<Response<Body>, Stri
 	.render()
 	.unwrap_or_default();
 
-	Ok(Response::builder().status(404).header("content-type", "text/html").body(body.into()).unwrap_or_default())
+	Ok(Response::builder().status(404).header("content-type", "text/html").body(full(body)).unwrap_or_default())
 }
 
 /// Renders a generic info landing page.
@@ -1319,7 +1320,7 @@ pub async fn info(req: Request<Body>, msg: &str) -> Result<Response<Body>, Strin
 	.render()
 	.unwrap_or_default();
 
-	Ok(Response::builder().status(200).header("content-type", "text/html").body(body.into()).unwrap_or_default())
+	Ok(Response::builder().status(200).header("content-type", "text/html").body(full(body)).unwrap_or_default())
 }
 
 /// Returns true if the config/env variable `REDLIB_SFW_ONLY` carries the
@@ -1392,7 +1393,7 @@ pub async fn nsfw_landing(req: Request<Body>, req_url: String) -> Result<Respons
 	.render()
 	.unwrap_or_default();
 
-	Ok(Response::builder().status(403).header("content-type", "text/html").body(body.into()).unwrap_or_default())
+	Ok(Response::builder().status(403).header("content-type", "text/html").body(full(body)).unwrap_or_default())
 }
 
 /// Returns the last (non-empty) segment of a path string

@@ -5,7 +5,8 @@ use crate::{
 };
 use askama::Template;
 use build_html::{Container, Html, HtmlContainer, Table};
-use hyper::{http::Error, Body, Request, Response};
+use hyper::{http::Error, Request, Response};
+use crate::server::{full, Body};
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use time::OffsetDateTime;
@@ -33,7 +34,7 @@ pub async fn instance_info(req: Request<Body>) -> Result<Response<Body>, String>
 			}
 			.render()
 			.unwrap();
-			Response::builder().status(404).header("content-type", "text/html; charset=utf-8").body(error.into())
+			Response::builder().status(404).header("content-type", "text/html; charset=utf-8").body(full(error))
 		}
 	};
 	response.map_err(|err| format!("{err}"))
@@ -41,26 +42,23 @@ pub async fn instance_info(req: Request<Body>) -> Result<Response<Body>, String>
 
 fn info_json() -> Result<Response<Body>, Error> {
 	if let Ok(body) = serde_json::to_string(&*INSTANCE_INFO) {
-		Response::builder().status(200).header("content-type", "application/json").body(body.into())
+		Response::builder().status(200).header("content-type", "application/json").body(full(body))
 	} else {
 		Response::builder()
 			.status(500)
 			.header("content-type", "text/plain")
-			.body(Body::from("Error serializing JSON"))
+			.body(full("Error serializing JSON"))
 	}
 }
 
 fn info_yaml() -> Result<Response<Body>, Error> {
 	if let Ok(body) = serde_yaml_ng::to_string(&*INSTANCE_INFO) {
-		// We can use `application/yaml` as media type, though there is no guarantee
-		// that browsers will honor it. But we'll do it anyway. See:
-		// https://github.com/ietf-wg-httpapi/mediatypes/blob/main/draft-ietf-httpapi-yaml-mediatypes.md#media-type-applicationyaml-application-yaml
-		Response::builder().status(200).header("content-type", "application/yaml").body(body.into())
+		Response::builder().status(200).header("content-type", "application/yaml").body(full(body))
 	} else {
 		Response::builder()
 			.status(500)
 			.header("content-type", "text/plain")
-			.body(Body::from("Error serializing YAML."))
+			.body(full("Error serializing YAML."))
 	}
 }
 
@@ -68,7 +66,7 @@ fn info_txt() -> Result<Response<Body>, Error> {
 	Response::builder()
 		.status(200)
 		.header("content-type", "text/plain")
-		.body(Body::from(INSTANCE_INFO.to_string(&StringType::Raw)))
+		.body(full(INSTANCE_INFO.to_string(&StringType::Raw)))
 }
 fn info_html(req: &Request<Body>) -> Result<Response<Body>, Error> {
 	let message = MessageTemplate {
@@ -79,7 +77,7 @@ fn info_html(req: &Request<Body>) -> Result<Response<Body>, Error> {
 	}
 	.render()
 	.unwrap();
-	Response::builder().status(200).header("content-type", "text/html; charset=utf8").body(Body::from(message))
+	Response::builder().status(200).header("content-type", "text/html; charset=utf8").body(full(message))
 }
 #[derive(Serialize, Deserialize, Default)]
 pub struct InstanceInfo {

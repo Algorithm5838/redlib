@@ -6,7 +6,8 @@ use crate::{
 	subreddit::{can_access_quarantine, quarantine},
 };
 use askama::Template;
-use hyper::{Body, Request, Response};
+use hyper::{Request, Response};
+use crate::server::Body;
 use regex::Regex;
 use std::sync::LazyLock;
 

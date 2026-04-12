@@ -7,7 +7,8 @@ use clap::{Arg, ArgAction, Command};
 use std::sync::LazyLock;
 
 use futures_lite::FutureExt;
-use hyper::{header::HeaderValue, Body, Request, Response};
+use hyper::{header::HeaderValue, Request, Response};
+use redlib::server::{full, Body};
 use log::{info, warn};
 use redlib::client::{canonical_path, proxy, rate_limit_check, MEDIA_CLIENT};
 use redlib::server::{self, RequestExt};
@@ -24,7 +25,7 @@ async fn pwa_logo() -> Result<Response<Body>, String> {
 		Response::builder()
 			.status(200)
 			.header("content-type", "image/png")
-			.body(include_bytes!("../static/logo.png").as_ref().into())
+			.body(full(include_bytes!("../static/logo.png").as_ref()))
 			.unwrap_or_default(),
 	)
 }
@@ -35,7 +36,7 @@ async fn iphone_logo() -> Result<Response<Body>, String> {
 		Response::builder()
 			.status(200)
 			.header("content-type", "image/png")
-			.body(include_bytes!("../static/apple-touch-icon.png").as_ref().into())
+			.body(full(include_bytes!("../static/apple-touch-icon.png").as_ref()))
 			.unwrap_or_default(),
 	)
 }
@@ -46,7 +47,7 @@ async fn favicon() -> Result<Response<Body>, String> {
 			.status(200)
 			.header("content-type", "image/vnd.microsoft.icon")
 			.header("Cache-Control", "public, max-age=1209600, s-maxage=86400")
-			.body(include_bytes!("../static/favicon.ico").as_ref().into())
+			.body(full(include_bytes!("../static/favicon.ico").as_ref()))
 			.unwrap_or_default(),
 	)
 }
@@ -57,7 +58,7 @@ async fn font() -> Result<Response<Body>, String> {
 			.status(200)
 			.header("content-type", "font/woff2")
 			.header("Cache-Control", "public, max-age=1209600, s-maxage=86400")
-			.body(include_bytes!("../static/Inter.var.woff2").as_ref().into())
+			.body(full(include_bytes!("../static/Inter.var.woff2").as_ref()))
 			.unwrap_or_default(),
 	)
 }
@@ -68,7 +69,7 @@ async fn opensearch() -> Result<Response<Body>, String> {
 			.status(200)
 			.header("content-type", "application/opensearchdescription+xml")
 			.header("Cache-Control", "public, max-age=1209600, s-maxage=86400")
-			.body(include_bytes!("../static/opensearch.xml").as_ref().into())
+			.body(full(include_bytes!("../static/opensearch.xml").as_ref()))
 			.unwrap_or_default(),
 	)
 }
@@ -77,7 +78,7 @@ async fn resource(body: &str, content_type: &str, cache: bool) -> Result<Respons
 	let mut res = Response::builder()
 		.status(200)
 		.header("content-type", content_type)
-		.body(body.to_string().into())
+		.body(full(body.to_string()))
 		.unwrap_or_default();
 
 	if cache {
@@ -105,7 +106,7 @@ async fn style() -> Result<Response<Body>, String> {
 			.status(200)
 			.header("content-type", "text/css")
 			.header("Cache-Control", "public, max-age=1209600, s-maxage=86400")
-			.body(Body::from(STYLE_CSS.clone()))
+			.body(full(STYLE_CSS.clone()))
 			.unwrap_or_default(),
 	)
 }
@@ -428,7 +429,7 @@ pub async fn proxy_commit_info() -> Result<Response<Body>, String> {
 		Response::builder()
 			.status(200)
 			.header("content-type", "application/atom+xml")
-			.body(Body::from(fetch_commit_info().await))
+			.body(full(fetch_commit_info().await))
 			.unwrap_or_default(),
 	)
 }
@@ -452,7 +453,7 @@ pub async fn proxy_instances() -> Result<Response<Body>, String> {
 		Response::builder()
 			.status(200)
 			.header("content-type", "application/json")
-			.body(Body::from(fetch_instances().await))
+			.body(full(fetch_instances().await))
 			.unwrap_or_default(),
 	)
 }
