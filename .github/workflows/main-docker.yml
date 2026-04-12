@@ -6,6 +6,11 @@ on:
     types:
       - completed
 
+permissions:
+  contents: read
+  packages: write
+  actions: read
+
 env:
   REGISTRY_IMAGE: ghcr.io/algorithm5838/redlib
 
