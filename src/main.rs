@@ -230,10 +230,7 @@ async fn main() {
 		.get(|_| resource(include_str!("../static/manifest.json"), "application/json", false).boxed());
 	app.at("/robots.txt").get(|_| {
 		resource(
-			if match config::get_setting("REDLIB_ROBOTS_DISABLE_INDEXING") {
-				Some(val) => val == "on",
-				None => false,
-			} {
+			if redlib::utils::disable_indexing() {
 				"User-agent: *\nDisallow: /"
 			} else {
 				"User-agent: *\nDisallow: /u/\nDisallow: /user/"
@@ -425,49 +422,49 @@ async fn main() {
 }
 
 pub async fn proxy_commit_info() -> Result<Response<Body>, String> {
+	let body = fetch_commit_info().await.unwrap_or_default();
 	Ok(
 		Response::builder()
 			.status(200)
 			.header("content-type", "application/atom+xml")
-			.body(full(fetch_commit_info().await))
+			.body(full(body))
 			.unwrap_or_default(),
 	)
 }
 
-#[cached(time = 600)]
-async fn fetch_commit_info() -> String {
-	// wreq uses http v1.x: pass URL as &str and call .send().await, then .bytes().await
+#[cached(time = 600, result = true, result_fallback = true)]
+async fn fetch_commit_info() -> Result<String, String> {
 	let bytes = MEDIA_CLIENT
 		.get("https://github.com/redlib-org/redlib/commits/main.atom")
 		.send()
 		.await
-		.expect("Failed to request GitHub")
+		.map_err(|e| e.to_string())?
 		.bytes()
 		.await
-		.expect("Failed to read body");
-	String::from_utf8_lossy(&bytes).into_owned()
+		.map_err(|e| e.to_string())?;
+	Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 pub async fn proxy_instances() -> Result<Response<Body>, String> {
+	let body = fetch_instances().await.unwrap_or_default();
 	Ok(
 		Response::builder()
 			.status(200)
 			.header("content-type", "application/json")
-			.body(full(fetch_instances().await))
+			.body(full(body))
 			.unwrap_or_default(),
 	)
 }
 
-#[cached(time = 600)]
-async fn fetch_instances() -> String {
-	// wreq uses http v1.x: pass URL as &str and call .send().await, then .bytes().await
+#[cached(time = 600, result = true, result_fallback = true)]
+async fn fetch_instances() -> Result<String, String> {
 	let bytes = MEDIA_CLIENT
 		.get("https://raw.githubusercontent.com/redlib-org/redlib-instances/refs/heads/main/instances.json")
 		.send()
 		.await
-		.expect("Failed to request GitHub")
+		.map_err(|e| e.to_string())?
 		.bytes()
 		.await
-		.expect("Failed to read body");
-	String::from_utf8_lossy(&bytes).into_owned()
+		.map_err(|e| e.to_string())?;
+	Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
