@@ -14,20 +14,24 @@ RUN apt-get update \
 WORKDIR /redlib
 
 # download (most) dependencies in their own layer
-COPY Cargo.lock Cargo.toml ./
+COPY Cargo.lock Cargo.toml build.rs ./
 RUN mkdir src && echo "fn main() { panic!(\"why am i running?\") }" > src/main.rs
 RUN cargo build --release --locked --bin redlib
 RUN rm ./src/main.rs && rmdir ./src
 
 # copy the source and build the redlib binary
 COPY . ./
-RUN cargo build --release --locked --bin redlib
+RUN touch src/main.rs && cargo build --release --locked --bin redlib
 RUN echo "finished building redlib!"
 
 ########################
 ## release image
 ########################
 FROM ubuntu:${UBUNTU_RELEASE_VERSION} AS release
+
+# Install ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Import redlib binary from builder
 COPY --from=builder /redlib/target/release/redlib /usr/local/bin/redlib

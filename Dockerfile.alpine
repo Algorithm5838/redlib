@@ -16,14 +16,14 @@ RUN rustup target add x86_64-unknown-linux-musl
 WORKDIR /redlib
 
 # download (most) dependencies in their own layer
-COPY Cargo.lock Cargo.toml ./
+COPY Cargo.lock Cargo.toml build.rs ./
 RUN mkdir src && echo "fn main() { panic!(\"why am i running?\") }" > src/main.rs
 RUN cargo build --release --locked --bin redlib --target x86_64-unknown-linux-musl
 RUN rm ./src/main.rs && rmdir ./src
 
 # copy the source and build the redlib binary
 COPY . ./
-RUN cargo build --release --locked --bin redlib --target x86_64-unknown-linux-musl
+RUN touch src/main.rs && cargo build --release --locked --bin redlib --target x86_64-unknown-linux-musl
 RUN echo "finished building redlib!"
 
 ########################
