@@ -1323,6 +1323,10 @@ pub async fn info(req: Request<Body>, msg: &str) -> Result<Response<Body>, Strin
 	Ok(Response::builder().status(200).header("content-type", "text/html").body(full(body)).unwrap_or_default())
 }
 
+static SFW_ONLY: LazyLock<bool> = LazyLock::new(|| matches!(get_setting("REDLIB_SFW_ONLY").as_deref(), Some("on")));
+static ENABLE_RSS: LazyLock<bool> = LazyLock::new(|| matches!(get_setting("REDLIB_ENABLE_RSS").as_deref(), Some("on")));
+static DISABLE_INDEXING: LazyLock<bool> = LazyLock::new(|| matches!(get_setting("REDLIB_ROBOTS_DISABLE_INDEXING").as_deref(), Some("on")));
+
 /// Returns true if the config/env variable `REDLIB_SFW_ONLY` carries the
 /// value `on`.
 ///
@@ -1331,20 +1335,14 @@ pub async fn info(req: Request<Body>, msg: &str) -> Result<Response<Body>, Strin
 /// subreddits or posts or userpages for users Reddit has deemed NSFW will
 /// be denied.
 pub fn sfw_only() -> bool {
-	match get_setting("REDLIB_SFW_ONLY") {
-		Some(val) => val == "on",
-		None => false,
-	}
+	*SFW_ONLY
 }
 
 /// Returns true if the config/env variable REDLIB_ENABLE_RSS is set to "on".
 /// If this variable is set as such, the instance will enable RSS feeds.
 /// Otherwise, the instance will not provide RSS feeds.
 pub fn enable_rss() -> bool {
-	match get_setting("REDLIB_ENABLE_RSS") {
-		Some(val) => val == "on",
-		None => false,
-	}
+	*ENABLE_RSS
 }
 
 /// Returns true if the config/env variable `REDLIB_ROBOTS_DISABLE_INDEXING` carries the
@@ -1353,10 +1351,7 @@ pub fn enable_rss() -> bool {
 /// If this variable is set as such, the instance will block all robots in robots.txt and
 /// insert the noindex, nofollow meta tag on every page.
 pub fn disable_indexing() -> bool {
-	match get_setting("REDLIB_ROBOTS_DISABLE_INDEXING") {
-		Some(val) => val == "on",
-		None => false,
-	}
+	*DISABLE_INDEXING
 }
 
 /// Determines if a request should redirect to a NSFW landing gate.
