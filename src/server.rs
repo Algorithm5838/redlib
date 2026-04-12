@@ -236,7 +236,13 @@ impl RequestExt for Request<Body> {
 	}
 
 	fn cookie(&self, name: &str) -> Option<Cookie<'_>> {
-		self.cookies().into_iter().find(|c| c.name() == name)
+		self.headers().get("Cookie").and_then(|header| {
+			header
+				.to_str()
+				.unwrap_or_default()
+				.split("; ")
+				.find_map(|s| Cookie::parse(s).ok().filter(|c| c.name() == name))
+		})
 	}
 }
 
