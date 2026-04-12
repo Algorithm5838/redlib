@@ -3,7 +3,7 @@
 use crate::client::json;
 use crate::server::RequestExt;
 use crate::subreddit::{can_access_quarantine, quarantine};
-use crate::utils::{error, filter_posts, get_filters, nsfw_landing, parse_post, template, Post, Preferences};
+use crate::utils::{error, filter_posts, nsfw_landing, parse_post, template, Post, Preferences};
 
 use askama::Template;
 use hyper::{Body, Request, Response};
@@ -75,7 +75,8 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 				return Ok(nsfw_landing(req, req_url).await.unwrap_or_default());
 			}
 
-			let filters = get_filters(&req);
+			let prefs = Preferences::new(&req);
+			let filters: HashSet<String> = prefs.filters.iter().cloned().collect();
 			let (duplicates, num_posts_filtered, all_posts_filtered) = parse_duplicates(&response[1], &filters).await;
 
 			// These are the values for the "before=", "after=", and "sort="
@@ -201,7 +202,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 				params: DuplicatesParams { before, after, sort },
 				post,
 				duplicates,
-				prefs: Preferences::new(&req),
+				prefs,
 				url: req_url,
 				num_posts_filtered,
 				all_posts_filtered,
