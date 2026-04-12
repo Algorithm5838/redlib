@@ -4,12 +4,12 @@ use crate::config::get_setting;
 use crate::server::RequestExt;
 use crate::subreddit::{can_access_quarantine, quarantine};
 use crate::utils::{
-	error, format_num, get_filters, nsfw_landing, param, parse_post, rewrite_emotes, setting, template, time, val, Author, Awards, Comment, Flair, FlairPart, Post, Preferences,
+	error, format_num, nsfw_landing, param, parse_post, rewrite_emotes, setting, template, time, val, Author, Awards, Comment, Flair, FlairPart, Post, Preferences,
 };
 use askama::Template;
 use hyper::{Body, Request, Response};
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 // STRUCTS
@@ -76,13 +76,13 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 				None => String::new(),
 			};
 
-			let query_string = format!("q={query_body}&type=comment");
-			let form = url::form_urlencoded::parse(query_string.as_bytes()).collect::<HashMap<_, _>>();
-			let query = form.get("q").unwrap().clone().to_string();
+			let query = query_body;
 
+			let prefs = Preferences::new(&req);
+			let filters: HashSet<String> = prefs.filters.iter().cloned().collect();
 			let comments = match query.as_str() {
-				"" => parse_comments(&response[1], &post.permalink, &post.author.name, highlighted_comment, &get_filters(&req), &req),
-				_ => query_comments(&response[1], &post.permalink, &post.author.name, highlighted_comment, &get_filters(&req), &query, &req),
+				"" => parse_comments(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &req),
+				_ => query_comments(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &query, &req),
 			};
 
 			// Use the Post and Comment structs to generate a website to show users
@@ -91,7 +91,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 				post,
 				url_without_query: url.clone().trim_end_matches(&format!("?q={query}&type=comment")).to_string(),
 				sort,
-				prefs: Preferences::new(&req),
+				prefs,
 				single_thread,
 				url: req_url,
 				comment_query: query,
@@ -170,8 +170,10 @@ fn build_comment(
 	req: &Request<Body>,
 ) -> Comment {
 	let id = val(comment, "id");
+	let comment_author = val(comment, "author");
+	let comment_body = val(comment, "body");
 
-	let body = if (val(comment, "author") == "[deleted]" && val(comment, "body") == "[removed]") || val(comment, "body") == "[ Removed by Reddit ]" {
+	let body = if (comment_author == "[deleted]" && comment_body == "[removed]") || comment_body == "[ Removed by Reddit ]" {
 		format!(
 			"<div class=\"md\"><p>[removed] — <a href=\"https://{}{post_link}{id}\">view removed comment</a></p></div>",
 			get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)),
@@ -203,7 +205,7 @@ fn build_comment(
 	let highlighted = id == highlighted_comment;
 
 	let author = Author {
-		name: val(comment, "author"),
+		name: comment_author,
 		flair: Flair {
 			flair_parts: FlairPart::parse(
 				data["author_flair_type"].as_str().unwrap_or_default(),

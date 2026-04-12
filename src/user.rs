@@ -1,7 +1,7 @@
 #![allow(clippy::cmp_owned)]
 use crate::client::json;
 use crate::server::RequestExt;
-use crate::utils::{error, filter_posts, format_url, get_filters, nsfw_landing, param, setting, template, Post, Preferences, User};
+use crate::utils::{error, filter_posts, format_url, nsfw_landing, param, setting, template, Post, Preferences, User};
 use crate::{config, utils};
 use askama::Template;
 use chrono::DateTime;
@@ -60,7 +60,8 @@ pub async fn profile(req: Request<Body>) -> Result<Response<Body>, String> {
 		return Ok(nsfw_landing(req, req_url).await.unwrap_or_default());
 	}
 
-	let filters = get_filters(&req);
+	let prefs = Preferences::new(&req);
+	let filters: std::collections::HashSet<String> = prefs.filters.iter().cloned().collect();
 	if filters.contains(&["u_", &username].concat()) {
 		Ok(template(&UserTemplate {
 			user,
@@ -68,7 +69,7 @@ pub async fn profile(req: Request<Body>) -> Result<Response<Body>, String> {
 			sort: (sort, param(&path, "t").unwrap_or_default()),
 			ends: (param(&path, "after").unwrap_or_default(), String::new()),
 			listing,
-			prefs: Preferences::new(&req),
+			prefs,
 			url,
 			redirect_url,
 			is_filtered: true,
@@ -89,7 +90,7 @@ pub async fn profile(req: Request<Body>) -> Result<Response<Body>, String> {
 					sort: (sort, param(&path, "t").unwrap_or_default()),
 					ends: (param(&path, "after").unwrap_or_default(), after),
 					listing,
-					prefs: Preferences::new(&req),
+					prefs,
 					url,
 					redirect_url,
 					is_filtered: false,

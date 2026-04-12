@@ -66,6 +66,44 @@ pub fn build_client() -> WreqClient {
 		.expect("Should always be able to build a client")
 }
 
+/// Convert a wreq Response into a hyper Response<Body>.
+/// This bridge lets the rest of the codebase stay unchanged.
+trait IntoHyperResponse {
+	async fn into_hyper(self) -> Result<Response<Body>, String>;
+}
+
+impl IntoHyperResponse for wreq::Response {
+	async fn into_hyper(self) -> Result<Response<Body>, String> {
+		// wreq uses http v1.x; hyper uses http v0.2.x. Convert via primitives.
+		let status_u16 = self.status().as_u16();
+		let status = hyper::StatusCode::from_u16(status_u16).map_err(|e| e.to_string())?;
+
+		// Snapshot headers before consuming self (bytes() moves self).
+		// Use SmallVec-style stack storage: most responses have < 32 headers.
+		let mut builder = hyper::Response::builder().status(status);
+		for (k, v) in self.headers() {
+			// Skip headers that hyper rejects (e.g. non-ASCII bytes in CDN headers)
+			// rather than aborting the entire response.
+			if let (Ok(key), Ok(val)) = (
+				hyper::header::HeaderName::from_bytes(k.as_str().as_bytes()),
+				hyper::header::HeaderValue::from_bytes(v.as_bytes()),
+			) {
+				builder = builder.header(key, val);
+			}
+		}
+
+		let bytes = self.bytes().await.map_err(|e| e.to_string())?;
+		// wreq already decompresses; remove the content-encoding header so
+		// downstream code doesn't try to decompress again.
+		if let Some(h) = builder.headers_mut() {
+			h.remove(header::CONTENT_ENCODING);
+			h.insert(header::CONTENT_LENGTH, bytes.len().into());
+		}
+
+		builder.body(Body::from(bytes)).map_err(|e| e.to_string())
+	}
+}
+
 /// Gets the canonical path for a resource on Reddit. This is accomplished by
 /// making a `HEAD` request to Reddit at the path given in `path`.
 ///

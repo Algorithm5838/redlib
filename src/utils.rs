@@ -14,10 +14,9 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use serde_json_path::{JsonPath, JsonPathExt};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::io::{Read, Write};
-use std::str::FromStr;
 use std::string::ToString;
 use std::sync::LazyLock;
 use time::{macros::format_description, Duration, OffsetDateTime};
@@ -522,22 +521,16 @@ impl std::fmt::Display for Awards {
 impl Awards {
 	/// Convert Reddit awards JSON to Awards struct
 	pub fn parse(items: &Value) -> Self {
-		let parsed = items.as_array().unwrap_or(&Vec::new()).iter().fold(Vec::new(), |mut awards, item| {
-			let name = item["name"].as_str().unwrap_or_default().to_string();
-			let icon_url = format_url(item["resized_icons"][0]["url"].as_str().unwrap_or_default());
-			let description = item["description"].as_str().unwrap_or_default().to_string();
-			let count: i64 = i64::from_str(&item["count"].to_string()).unwrap_or(1);
-
-			awards.push(Award {
-				name,
-				icon_url,
-				description,
-				count,
+		let arr = items.as_array().map(|v| v.as_slice()).unwrap_or_default();
+		let mut parsed = Vec::with_capacity(arr.len());
+		for item in arr {
+			parsed.push(Award {
+				name: item["name"].as_str().unwrap_or_default().to_string(),
+				icon_url: format_url(item["resized_icons"][0]["url"].as_str().unwrap_or_default()),
+				description: item["description"].as_str().unwrap_or_default().to_string(),
+				count: item["count"].as_i64().unwrap_or(1),
 			});
-
-			awards
-		});
-
+		}
 		Self(parsed)
 	}
 }
@@ -896,15 +889,10 @@ pub async fn parse_post(post: &Value) -> Post {
 
 /// Grab a query parameter from a url
 pub fn param(path: &str, value: &str) -> Option<String> {
-	Some(
-		Url::parse(format!("https://libredd.it/{path}").as_str())
-			.ok()?
-			.query_pairs()
-			.into_owned()
-			.collect::<HashMap<_, _>>()
-			.get(value)?
-			.clone(),
-	)
+	let query = path.splitn(2, '?').nth(1).unwrap_or_default();
+	url::form_urlencoded::parse(query.as_bytes())
+		.find(|(k, _)| k == value)
+		.map(|(_, v)| v.into_owned())
 }
 
 /// Retrieve the value of a setting by name
@@ -1092,25 +1080,18 @@ pub fn rewrite_urls(input_text: &str) -> String {
 		// Rewrite Reddit links to Redlib
 		REDDIT_REGEX.replace_all(input_text, r#"href="/"#).to_string();
 
-	loop {
-		if REDDIT_EMOJI_REGEX.find(&text1).is_none() {
-			break;
-		} else {
-			text1 = REDDIT_EMOJI_REGEX
-				.replace_all(&text1, format_url(REDDIT_EMOJI_REGEX.find(&text1).map(|x| x.as_str()).unwrap_or_default()))
-				.to_string()
-		}
-	}
+	text1 = REDDIT_EMOJI_REGEX.replace_all(&text1, |caps: &regex::Captures| format_url(&caps[0])).to_string();
 
 	// Remove (html-encoded) "\" from URLs.
 	text1 = text1.replace("%5C", "").replace("\\_", "_");
 
 	// Rewrite external media previews to Redlib
 	loop {
-		if REDDIT_PREVIEW_REGEX.find(&text1).is_none() {
+		let Some(caps) = REDDIT_PREVIEW_REGEX.captures(&text1) else {
 			return text1;
-		} else {
-			let formatted_url = format_url(REDDIT_PREVIEW_REGEX.find(&text1).map(|x| x.as_str()).unwrap_or_default());
+		};
+		{
+			let formatted_url = format_url(caps.get(0).map_or("", |m| m.as_str()));
 
 			let image_url = REDLIB_PREVIEW_LINK_REGEX.find(&formatted_url).map_or("", |m| m.as_str());
 			let mut image_caption = REDLIB_PREVIEW_TEXT_REGEX.find(&formatted_url).map_or("", |m| m.as_str());
@@ -1139,7 +1120,7 @@ pub fn rewrite_urls(input_text: &str) -> String {
 
 			/* In order to know if we're dealing with a normal or external preview we need to take a look at the first capture group of REDDIT_PREVIEW_REGEX
 			if it's preview we're dealing with something that needs /preview/pre, external-preview is /preview/external-pre, and i is /img */
-			let reddit_preview_regex_capture = REDDIT_PREVIEW_REGEX.captures(&text1).unwrap().get(1).map_or("", |m| m.as_str());
+			let reddit_preview_regex_capture = caps.get(1).map_or("", |m| m.as_str());
 
 			let _preview_type = match reddit_preview_regex_capture {
 				"preview" => "/preview/pre",
@@ -1389,12 +1370,14 @@ pub async fn nsfw_landing(req: Request<Body>, req_url: String) -> Result<Respons
 
 	// Determine from the request URL if the resource is a subreddit, a user
 	// page, or a post.
-	let resource: String = if !req.param("name").unwrap_or_default().is_empty() {
+	let name = req.param("name").unwrap_or_default();
+	let id = req.param("id").unwrap_or_default();
+	let resource: String = if !name.is_empty() {
 		res_type = ResourceType::User;
-		req.param("name").unwrap_or_default()
-	} else if !req.param("id").unwrap_or_default().is_empty() {
+		name
+	} else if !id.is_empty() {
 		res_type = ResourceType::Post;
-		req.param("id").unwrap_or_default()
+		id
 	} else {
 		res_type = ResourceType::Subreddit;
 		req.param("sub").unwrap_or_default()
