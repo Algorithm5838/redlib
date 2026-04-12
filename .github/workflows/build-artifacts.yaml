@@ -24,6 +24,11 @@ jobs:
         with:
           target: aarch64-unknown-linux-musl
 
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-unknown-linux-musl
+
       - name: Install base dependencies
         run: |
           sudo apt-get update
