@@ -28,7 +28,7 @@ use std::{
 use time::OffsetDateTime;
 use tokio::net::TcpListener;
 
-use crate::{config, dbg_msg};
+use crate::dbg_msg;
 
 /// The unified body type used for all responses.
 pub type Body = BoxBody<Bytes, Infallible>;
@@ -373,10 +373,7 @@ impl Server {
 									let def_headers = (*default_headers).clone();
 
 									// Catch robots.txt-disrespectful bots who still identify themselves
-									if match config::get_setting("REDLIB_ROBOTS_DISABLE_INDEXING") {
-										Some(val) => val == "on",
-										None => false,
-									} {
+									if crate::utils::disable_indexing() {
 										if let Some(user_agent) = req_headers.get("user-agent") {
 											if let Ok(user_agent_str) = user_agent.to_str() {
 												for banned in BANNED_USER_AGENTS {
