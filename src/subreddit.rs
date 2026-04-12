@@ -1,7 +1,7 @@
 #![allow(clippy::cmp_owned)]
 
 use crate::utils::{
-	Post, Preferences, Subreddit, catch_random, error, filter_posts, format_num, format_url, get_filters, info, nsfw_landing, param, redirect, rewrite_urls, setting, template, to_absolute_url, val
+	Post, Preferences, Subreddit, catch_random, error, filter_posts, format_num, format_url, info, nsfw_landing, param, redirect, rewrite_urls, setting, setting_or_default, template, to_absolute_url, val
 };
 use crate::{client::json, server::RequestExt, server::ResponseExt};
 use crate::{config, utils};
@@ -144,7 +144,8 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let path = format!("/r/{}/{sort}.json?{}{params}", sub_name.replace('+', "%2B"), req.uri().query().unwrap_or_default());
 	let url = String::from(req.uri().path_and_query().map_or("", |val| val.as_str()));
 	let redirect_url = url[1..].replace('?', "%3F").replace('&', "%26").replace('+', "%2B");
-	let filters = get_filters(&req);
+	let prefs = Preferences::new(&req);
+	let filters: std::collections::HashSet<String> = prefs.filters.iter().cloned().collect();
 
 	// If all requested subs are filtered, we don't need to fetch posts.
 	if sub_name.split('+').all(|s| filters.contains(s)) {
@@ -153,7 +154,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			posts: Vec::new(),
 			sort: (sort, param(&path, "t").unwrap_or_default()),
 			ends: (param(&path, "after").unwrap_or_default(), String::new()),
-			prefs: Preferences::new(&req),
+			prefs: prefs.clone(),
 			url,
 			redirect_url,
 			is_filtered: true,
@@ -176,7 +177,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					posts,
 					sort: (sort, param(&path, "t").unwrap_or_default()),
 					ends: (param(&path, "after").unwrap_or_default(), after),
-					prefs: Preferences::new(&req),
+					prefs,
 					url,
 					redirect_url,
 					is_filtered: false,

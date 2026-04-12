@@ -1,5 +1,5 @@
 #![allow(clippy::cmp_owned)]
-use crate::utils::{self, catch_random, error, filter_posts, format_num, format_url, get_filters, param, redirect, setting, template, val, Post, Preferences};
+use crate::utils::{self, catch_random, error, filter_posts, format_num, format_url, param, redirect, setting, template, val, Post, Preferences};
 use crate::{
 	client::json,
 	server::RequestExt,
@@ -92,7 +92,8 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 	let typed = param(&path, "type").unwrap_or_default();
 
 	let sort = param(&path, "sort").unwrap_or_else(|| "relevance".to_string());
-	let filters = get_filters(&req);
+	let prefs = Preferences::new(&req);
+	let filters: std::collections::HashSet<String> = prefs.filters.iter().cloned().collect();
 
 	// If search is not restricted to this subreddit, show other subreddits in search results
 	let subreddits = if param(&path, "restrict_sr").is_none() {
@@ -120,7 +121,7 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 				restrict_sr: param(&path, "restrict_sr").unwrap_or_default(),
 				typed,
 			},
-			prefs: Preferences::new(&req),
+			prefs: prefs.clone(),
 			url,
 			is_filtered: true,
 			all_posts_filtered: false,
@@ -146,7 +147,7 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 						restrict_sr: param(&path, "restrict_sr").unwrap_or_default(),
 						typed,
 					},
-					prefs: Preferences::new(&req),
+					prefs,
 					url,
 					is_filtered: false,
 					all_posts_filtered,

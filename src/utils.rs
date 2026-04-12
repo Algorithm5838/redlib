@@ -450,13 +450,13 @@ impl Post {
 				rel_time,
 				created,
 				created_ts,
-				num_duplicates: post["data"]["num_duplicates"].as_u64().unwrap_or(0),
+				num_duplicates: data["num_duplicates"].as_u64().unwrap_or(0),
 				comments: format_num(data["num_comments"].as_i64().unwrap_or_default()),
 				gallery,
 				awards,
-				nsfw: post["data"]["over_18"].as_bool().unwrap_or_default(),
+				nsfw: data["over_18"].as_bool().unwrap_or_default(),
 				ws_url: val(post, "websocket_url"),
-				out_url: post["data"]["url_overridden_by_dest"].as_str().map(|a| a.to_string()),
+				out_url: data["url_overridden_by_dest"].as_str().map(|a| a.to_string()),
 			});
 		}
 		Ok((posts, res["data"]["after"].as_str().unwrap_or_default().to_string()))
@@ -611,7 +611,7 @@ pub struct Params {
 	pub before: Option<String>,
 }
 
-#[derive(Default, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[revisioned(revision = 1)]
 pub struct Preferences {
 	#[revision(start = 1)]
@@ -752,11 +752,6 @@ pub fn deflate_decompress(i: Vec<u8>) -> Result<Vec<u8>, String> {
 	Ok(out)
 }
 
-/// Gets a `HashSet` of filters from the cookie in the given `Request`.
-pub fn get_filters(req: &Request<Body>) -> HashSet<String> {
-	setting(req, "filters").split('+').map(String::from).filter(|s| !s.is_empty()).collect::<HashSet<String>>()
-}
-
 /// Filters a `Vec<Post>` by the given `HashSet` of filters (each filter being
 /// a subreddit name or a user name). If a `Post`'s subreddit or author is
 /// found in the filters, it is removed.
@@ -765,7 +760,7 @@ pub fn get_filters(req: &Request<Body>) -> HashSet<String> {
 /// second return value is `true` if all posts were filtered.
 pub fn filter_posts(posts: &mut Vec<Post>, filters: &HashSet<String>) -> (u64, bool) {
 	// This is the length of the Vec<Post> prior to applying the filter.
-	let lb: u64 = posts.len().try_into().unwrap_or(0);
+	let lb = posts.len() as u64;
 
 	if posts.is_empty() {
 		(0, false)
@@ -774,7 +769,7 @@ pub fn filter_posts(posts: &mut Vec<Post>, filters: &HashSet<String>) -> (u64, b
 
 		// Get the length of the Vec<Post> after applying the filter.
 		// If lb > la, then at least one post was removed.
-		let la: u64 = posts.len().try_into().unwrap_or(0);
+		let la = posts.len() as u64;
 
 		(lb - la, posts.is_empty())
 	}
@@ -782,22 +777,24 @@ pub fn filter_posts(posts: &mut Vec<Post>, filters: &HashSet<String>) -> (u64, b
 
 /// Creates a [`Post`] from a provided JSON.
 pub async fn parse_post(post: &Value) -> Post {
+	let data = &post["data"];
+
 	// Grab UTC time as unix timestamp
-	let (rel_time, created) = time(post["data"]["created_utc"].as_f64().unwrap_or_default());
+	let created_utc = data["created_utc"].as_f64().unwrap_or_default();
+	let (rel_time, created) = time(created_utc);
+	let created_ts = created_utc.round() as u64;
 	// Parse post score and upvote ratio
-	let score = post["data"]["score"].as_i64().unwrap_or_default();
-	let ratio: f64 = post["data"]["upvote_ratio"].as_f64().unwrap_or(1.0) * 100.0;
+	let score = data["score"].as_i64().unwrap_or_default();
+	let ratio: f64 = data["upvote_ratio"].as_f64().unwrap_or(1.0) * 100.0;
 
 	// Determine the type of media along with the media URL
-	let (post_type, media, gallery) = Media::parse(&post["data"]).await;
+	let (post_type, media, gallery) = Media::parse(data).await;
 
-	let created_ts = post["data"]["created_utc"].as_f64().unwrap_or_default().round() as u64;
-
-	let awards: Awards = Awards::parse(&post["data"]["all_awardings"]);
+	let awards: Awards = Awards::parse(&data["all_awardings"]);
 
 	let permalink = val(post, "permalink");
 
-	let poll = Poll::parse(&post["data"]["poll_data"]);
+	let poll = Poll::parse(&data["poll_data"]);
 
 	let body = if val(post, "removed_by_category") == "moderator" {
 		format!(
@@ -826,9 +823,9 @@ pub async fn parse_post(post: &Value) -> Post {
 			name: val(post, "author"),
 			flair: Flair {
 				flair_parts: FlairPart::parse(
-					post["data"]["author_flair_type"].as_str().unwrap_or_default(),
-					post["data"]["author_flair_richtext"].as_array(),
-					post["data"]["author_flair_text"].as_str(),
+					data["author_flair_type"].as_str().unwrap_or_default(),
+					data["author_flair_richtext"].as_array(),
+					data["author_flair_text"].as_str(),
 				),
 				text: val(post, "link_flair_text"),
 				background_color: val(post, "author_flair_background_color"),
@@ -846,16 +843,16 @@ pub async fn parse_post(post: &Value) -> Post {
 		thumbnail: Media {
 			url: format_url(val(post, "thumbnail").as_str()),
 			alt_url: String::new(),
-			width: post["data"]["thumbnail_width"].as_i64().unwrap_or_default(),
-			height: post["data"]["thumbnail_height"].as_i64().unwrap_or_default(),
+			width: data["thumbnail_width"].as_i64().unwrap_or_default(),
+			height: data["thumbnail_height"].as_i64().unwrap_or_default(),
 			poster: String::new(),
 			download_name: String::new(),
 		},
 		flair: Flair {
 			flair_parts: FlairPart::parse(
-				post["data"]["link_flair_type"].as_str().unwrap_or_default(),
-				post["data"]["link_flair_richtext"].as_array(),
-				post["data"]["link_flair_text"].as_str(),
+				data["link_flair_type"].as_str().unwrap_or_default(),
+				data["link_flair_richtext"].as_array(),
+				data["link_flair_text"].as_str(),
 			),
 			text: val(post, "link_flair_text"),
 			background_color: val(post, "link_flair_background_color"),
@@ -866,21 +863,21 @@ pub async fn parse_post(post: &Value) -> Post {
 			},
 		},
 		flags: Flags {
-			spoiler: post["data"]["spoiler"].as_bool().unwrap_or_default(),
-			nsfw: post["data"]["over_18"].as_bool().unwrap_or_default(),
-			stickied: post["data"]["stickied"].as_bool().unwrap_or_default() || post["data"]["pinned"].as_bool().unwrap_or(false),
+			spoiler: data["spoiler"].as_bool().unwrap_or_default(),
+			nsfw: data["over_18"].as_bool().unwrap_or_default(),
+			stickied: data["stickied"].as_bool().unwrap_or_default() || data["pinned"].as_bool().unwrap_or(false),
 		},
 		domain: val(post, "domain"),
 		rel_time,
 		created,
 		created_ts,
-		num_duplicates: post["data"]["num_duplicates"].as_u64().unwrap_or(0),
-		comments: format_num(post["data"]["num_comments"].as_i64().unwrap_or_default()),
+		num_duplicates: data["num_duplicates"].as_u64().unwrap_or(0),
+		comments: format_num(data["num_comments"].as_i64().unwrap_or_default()),
 		gallery,
 		awards,
-		nsfw: post["data"]["over_18"].as_bool().unwrap_or_default(),
+		nsfw: data["over_18"].as_bool().unwrap_or_default(),
 		ws_url: val(post, "websocket_url"),
-		out_url: post["data"]["url_overridden_by_dest"].as_str().map(|a| a.to_string()),
+		out_url: data["url_overridden_by_dest"].as_str().map(|a| a.to_string()),
 	}
 }
 
