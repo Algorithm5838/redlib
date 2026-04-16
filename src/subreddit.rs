@@ -68,7 +68,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let subscribed = setting(&req, "subscriptions");
 	let front_page = setting(&req, "front_page");
 	let remove_default_feeds = setting(&req, "remove_default_feeds") == "on";
-	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
+	let post_sort = setting_or_default(&req, "post_sort", "hot".to_string());
 	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
 
 	let sub_name = req.param("sub").unwrap_or(if front_page == "default" || front_page.is_empty() {
@@ -599,7 +599,7 @@ pub async fn rss(req: Request<Body>) -> Result<Response<Body>, String> {
 
 	// Get subreddit
 	let sub = req.param("sub").unwrap_or_default();
-	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
+	let post_sort = setting_or_default(&req, "post_sort", "hot".to_string());
 	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
 
 	// Get path
