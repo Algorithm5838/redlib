@@ -206,7 +206,7 @@ pub async fn proxy(req: Request<Body>, format: &str) -> Result<Response<Body>, S
 
 	let mut builder = CLIENT.get(wreq_uri);
 
-	// Copy useful headers from original request
+	// Forward caching/range headers from the browser request.
 	for &key in &["Range", "If-Modified-Since", "Cache-Control"] {
 		if let Some(value) = req.headers().get(key) {
 			builder = builder.header(key, value.as_bytes());
