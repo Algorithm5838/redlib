@@ -604,8 +604,8 @@ async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &m
 	let body_bytes: Vec<u8> = {
 		// Swap body with empty, collect old body
 		let old_body = std::mem::replace(res.body_mut(), empty());
-		// Body error type is Infallible, so unwrap is safe
-		old_body.collect().await.unwrap().to_bytes().to_vec()
+		// Body error type is Infallible, so collect cannot fail
+		old_body.collect().await.expect("Body<Infallible> collect cannot fail").to_bytes().to_vec()
 	};
 
 	// Don't bother compressing tiny responses

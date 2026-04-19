@@ -56,8 +56,8 @@ pub fn build_client() -> WreqClient {
 	let emulation_os = [EmulationOS::Android, EmulationOS::Windows];
 
 	let emulation = EmulationOption::builder()
-		.emulation(*fastrand::choice(emulation.iter()).unwrap())
-		.emulation_os(*fastrand::choice(emulation_os.iter()).unwrap())
+		.emulation(*fastrand::choice(emulation.iter()).expect("emulation is a non-empty array literal"))
+		.emulation_os(*fastrand::choice(emulation_os.iter()).expect("emulation_os is a non-empty array literal"))
 		.build()
 		.emulation();
 

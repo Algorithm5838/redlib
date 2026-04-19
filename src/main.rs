@@ -185,8 +185,8 @@ async fn main() {
 		}
 	}
 
-	let address = matches.get_one::<String>("address").unwrap();
-	let port = matches.get_one::<String>("port").unwrap();
+	let address = matches.get_one::<String>("address").expect("'address' has a default_value and is always present");
+	let port = matches.get_one::<String>("port").expect("'port' has a default_value and is always present");
 	let hsts = matches.get_one("hsts").map(|m: &String| m.as_str());
 
 	let ipv4_only = std::env::var("IPV4_ONLY").is_ok() || matches.get_flag("ipv4-only");
