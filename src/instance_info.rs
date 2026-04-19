@@ -108,6 +108,8 @@ impl InstanceInfo {
 	fn to_table(&self) -> String {
 		let mut container = Container::default();
 		let convert = |o: &Option<String>| -> String { o.clone().unwrap_or_else(|| "<span class=\"unset\"><i>Unset</i></span>".to_owned()) };
+		// Pushshift: show the configured value, or fall back to the compiled-in default.
+		let pushshift_display = self.config.pushshift.clone().unwrap_or_else(|| crate::config::DEFAULT_PUSHSHIFT_FRONTEND.to_owned());
 		if let Some(banner) = &self.config.banner {
 			container.add_header(3, "Instance banner");
 			container.add_raw("<br />");
@@ -123,11 +125,10 @@ impl InstanceInfo {
 				["Deploy timestamp", &self.deploy_unix_ts.to_string()],
 				["Compile mode", &self.compile_mode],
 				["SFW only", &convert(&self.config.sfw_only)],
-				["Pushshift frontend", &convert(&self.config.pushshift)],
+				["Pushshift frontend", &pushshift_display],
 				["RSS enabled", &convert(&self.config.enable_rss)],
 				["Full URL", &convert(&self.config.full_url)],
 				["Remove default feeds", &convert(&self.config.default_remove_default_feeds)],
-				//TODO: fallback to crate::config::DEFAULT_PUSHSHIFT_FRONTEND
 			])
 			.with_header_row(["Settings"]),
 		);
