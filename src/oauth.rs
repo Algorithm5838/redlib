@@ -252,14 +252,16 @@ impl OauthBackend for MobileSpoofAuth {
 		// Not worried about the privacy implications, since this is randomly changed
 		// and really only as privacy-concerning as the OAuth token itself.
 		if let Some(header) = resp.headers().get("x-reddit-loid") {
-			let header_val: &wreq::header::HeaderValue = header;
-			self.additional_headers.insert("x-reddit-loid".to_owned(), header_val.to_str().unwrap().to_string());
+			if let Ok(val) = header.to_str() {
+				self.additional_headers.insert("x-reddit-loid".to_owned(), val.to_string());
+			}
 		}
 
 		// Same with x-reddit-session
 		if let Some(header) = resp.headers().get("x-reddit-session") {
-			let header_val: &wreq::header::HeaderValue = header;
-			self.additional_headers.insert("x-reddit-session".to_owned(), header_val.to_str().unwrap().to_string());
+			if let Ok(val) = header.to_str() {
+				self.additional_headers.insert("x-reddit-session".to_owned(), val.to_string());
+			}
 		}
 
 		trace!("Serializing response...");
@@ -365,14 +367,16 @@ impl OauthBackend for GenericWebAuth {
 		// Not worried about the privacy implications, since this is randomly changed
 		// and really only as privacy-concerning as the OAuth token itself.
 		if let Some(header) = resp.headers().get("x-reddit-loid") {
-			let header_val: &wreq::header::HeaderValue = header;
-			self.additional_headers.insert("x-reddit-loid".to_owned(), header_val.to_str().unwrap().to_string());
+			if let Ok(val) = header.to_str() {
+				self.additional_headers.insert("x-reddit-loid".to_owned(), val.to_string());
+			}
 		}
 
 		// Same with x-reddit-session
 		if let Some(header) = resp.headers().get("x-reddit-session") {
-			let header_val: &wreq::header::HeaderValue = header;
-			self.additional_headers.insert("x-reddit-session".to_owned(), header_val.to_str().unwrap().to_string());
+			if let Ok(val) = header.to_str() {
+				self.additional_headers.insert("x-reddit-session".to_owned(), val.to_string());
+			}
 		}
 
 		trace!("Serializing GenericWebAuth response...");
