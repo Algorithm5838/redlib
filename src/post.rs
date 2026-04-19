@@ -73,7 +73,12 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 
 			let query_body = match COMMENT_SEARCH_CAPTURE.captures(&url) {
-				Some(captures) => captures.get(1).unwrap().as_str().replace("%20", " ").replace('+', " "),
+				Some(captures) => captures
+					.get(1)
+					.expect("COMMENT_SEARCH_CAPTURE has exactly one capture group; .get(1) is always Some on a match")
+					.as_str()
+					.replace("%20", " ")
+					.replace('+', " "),
 				None => String::new(),
 			};
 
