@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #![allow(clippy::cmp_owned)]
 
 use crate::config::{self, get_setting};
