@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::cmp_owned)]
 
+use bytes::Bytes;
 use cached::proc_macro::cached;
 use clap::{Arg, ArgAction, Command};
 use std::sync::LazyLock;
@@ -101,14 +102,18 @@ async fn resource(body: &str, content_type: &str, cache: bool) -> Result<Respons
 	Ok(res)
 }
 
-static STYLE_CSS: LazyLock<String> = LazyLock::new(|| {
+static STYLE_CSS: LazyLock<Bytes> = LazyLock::new(|| {
 	let mut res = include_str!("../static/style.css").to_string();
 	for file in ThemeAssets::iter() {
 		res.push('\n');
-		let theme = ThemeAssets::get(file.as_ref()).unwrap();
-		res.push_str(std::str::from_utf8(theme.data.as_ref()).unwrap());
+		let theme = ThemeAssets::get(file.as_ref())
+			.expect("ThemeAssets::iter produced a key not recognised by ThemeAssets::get");
+		res.push_str(
+			std::str::from_utf8(theme.data.as_ref())
+				.expect("Theme CSS asset is not valid UTF-8"),
+		);
 	}
-	res
+	Bytes::from(res)
 });
 
 async fn style() -> Result<Response<Body>, String> {
