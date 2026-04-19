@@ -19,14 +19,14 @@ jobs:
     name: Rust project - latest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
           target: aarch64-unknown-linux-musl
 
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: aarch64-unknown-linux-musl
 
@@ -63,14 +63,14 @@ jobs:
         run: tar czf redlib-aarch64-unknown-linux-musl.tar.gz -C target/aarch64-unknown-linux-musl/release/ redlib
 
       - name: Upload binary as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: redlib-aarch64-unknown-linux-musl
           path: target/aarch64-unknown-linux-musl/release/redlib
           retention-days: 1
 
       - name: Upload release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: ${{ steps.version.outputs.VERSION }} - ${{ github.event.head_commit.message }}
