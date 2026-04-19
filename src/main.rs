@@ -141,13 +141,6 @@ async fn main() {
 		.arg(Arg::new("ipv4-only").short('4').long("ipv4-only").help("Listen on IPv4 only").num_args(0))
 		.arg(Arg::new("ipv6-only").short('6').long("ipv6-only").help("Listen on IPv6 only").num_args(0))
 		.arg(
-			Arg::new("redirect-https")
-				.short('r')
-				.long("redirect-https")
-				.help("Redirect all HTTP requests to HTTPS (no longer functional)")
-				.num_args(0),
-		)
-		.arg(
 			Arg::new("address")
 				.short('a')
 				.long("address")
