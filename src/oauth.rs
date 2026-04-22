@@ -284,7 +284,7 @@ impl OauthBackend for MobileSpoofAuth {
 			.as_u64()
 			.ok_or_else(|| AuthError::Field((json.clone(), "expires_in: as_u64")))?;
 
-		info!("[✅] Success - Retrieved token \"{}...\", expires in {}", &token[..32], expires_in);
+		info!("[✅] Success - Retrieved token (len={}), expires in {}", token.len(), expires_in);
 
 		Ok(OauthResponse {
 			token,
@@ -399,11 +399,7 @@ impl OauthBackend for GenericWebAuth {
 			.as_u64()
 			.ok_or_else(|| AuthError::Field((json.clone(), "expires_in: as_u64")))?;
 
-		info!(
-			"[✅] GenericWebAuth success - Retrieved token \"{}...\", expires in {}",
-			&token[..32.min(token.len())],
-			expires_in
-		);
+		info!("[✅] GenericWebAuth success - Retrieved token (len={}), expires in {}", token.len(), expires_in);
 
 		// Insert a few necessary headers
 		self.additional_headers.insert("Origin".to_owned(), "https://www.reddit.com".to_owned());
