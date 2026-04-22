@@ -113,7 +113,7 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 			subreddits,
 			sub,
 			params: SearchParams {
-				q: query.replace('"', "&quot;"),
+				q: query,
 				sort,
 				t: param(&path, "t").unwrap_or_default(),
 				before: param(&path, "after").unwrap_or_default(),
@@ -139,7 +139,7 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 					subreddits,
 					sub,
 					params: SearchParams {
-						q: query.replace('"', "&quot;"),
+						q: query,
 						sort,
 						t: param(&path, "t").unwrap_or_default(),
 						before: param(&path, "after").unwrap_or_default(),
