@@ -113,11 +113,7 @@ fn set_cookies_method(req: Request<Body>, remove_cookies: bool) -> Response<Body
 	let path = match form.get("redirect") {
 		Some(value) => {
 			let value = value.replace("%26", "&").replace("%23", "#");
-			if value.starts_with('/') {
-				value
-			} else {
-				format!("/{value}")
-			}
+			format!("/{}", value.trim_start_matches(|c| c == '/' || c == '\\'))
 		}
 		None => "/".to_string(),
 	};
