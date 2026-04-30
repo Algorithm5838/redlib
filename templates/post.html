@@ -80,6 +80,7 @@
       </div>
 
 		<!-- COMMENTS -->
+		<section id="comments">
 		{% for c in comments -%}
 		<div class="thread">
 			{% if single_thread %}
@@ -92,6 +93,7 @@
 			{{ c.render().unwrap()|safe }}
 		</div>
 		{%- endfor %}
+		</section>
 
 	</div>
 {% endblock %}
