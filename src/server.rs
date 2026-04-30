@@ -632,7 +632,7 @@ async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &m
 
 /// Compresses a `Vec<u8>` given a [`CompressionType`].
 // TTL of 600 (== 10 minutes) since compression is computationally expensive.
-#[cached(size = 100, time = 600, result = true)]
+#[cached(size = 1000, time = 600, result = true)]
 fn compress_body(compressor: CompressionType, body_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
 	let mut reader = io::Cursor::new(body_bytes);
 
