@@ -662,7 +662,10 @@ fn compress_body(compressor: CompressionType, body_bytes: Vec<u8>) -> Result<Vec
 		}
 
 		CompressionType::Brotli => {
-			let brotli_params = BrotliEncoderParams::default();
+			let brotli_params = BrotliEncoderParams {
+				quality: 5,
+				..Default::default()
+			};
 			let mut compressed = Vec::<u8>::new();
 			match BrotliCompress(&mut reader, &mut compressed, &brotli_params) {
 				Ok(_) => compressed,
