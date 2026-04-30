@@ -71,7 +71,7 @@ pub async fn set(req: Request<Body>) -> Result<Response<Body>, String> {
 		.filter_map(|header| Cookie::parse(header.to_str().unwrap_or_default()).ok())
 		.collect();
 
-	// Collect the body bytes (Body error is Infallible, so unwrap is safe)
+	// Request body is pre-buffered as Full<Bytes>; the String error cannot fire.
 	let body_bytes = body.collect().await.unwrap().to_bytes();
 
 	let form = url::form_urlencoded::parse(&body_bytes).collect::<HashMap<_, _>>();
@@ -263,7 +263,7 @@ pub async fn update(req: Request<Body>) -> Result<Response<Body>, String> {
 }
 
 pub async fn encoded_restore(req: Request<Body>) -> Result<Response<Body>, String> {
-	// Body error is Infallible, so unwrap is safe
+	// Request body is pre-buffered as Full<Bytes>; the String error cannot fire.
 	let body = req.into_body().collect().await.unwrap().to_bytes();
 
 	if body.len() > 1024 * 1024 {

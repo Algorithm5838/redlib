@@ -1,8 +1,9 @@
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use futures_lite::future::block_on;
-use futures_lite::{future::Boxed, FutureExt};
-use http_body_util::BodyExt;
+use futures_lite::{future::Boxed, FutureExt, StreamExt};
+use http_body_util::{BodyExt, StreamBody};
+use hyper::body::Frame;
 use hyper::{header, Method, Request, Response};
 use log::{error, info, trace, warn};
 use percent_encoding::{percent_encode, CONTROLS};
@@ -18,7 +19,7 @@ use std::result::Result;
 
 use crate::dbg_msg;
 use crate::oauth::{force_refresh_token, token_daemon, Oauth, OauthBackendImpl};
-use crate::server::RequestExt;
+use crate::server::{Body, RequestExt};
 use crate::utils::{format_url, Post};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
@@ -69,8 +70,6 @@ pub fn build_client() -> WreqClient {
 		.expect("Should always be able to build a client")
 }
 
-use crate::server::{full, Body};
-
 /// Convert a wreq Response into a hyper Response<Body>.
 /// wreq and hyper now both use http v1.x, so header types are directly compatible.
 trait IntoHyperResponse {
@@ -93,15 +92,18 @@ impl IntoHyperResponse for wreq::Response {
 			}
 		}
 
-		let bytes = self.bytes().await.map_err(|e| e.to_string())?;
-		// wreq already decompresses; remove the content-encoding header so
-		// downstream code doesn't try to decompress again.
+		// wreq already decompresses; drop content-length since the final
+		// size is unknown without buffering, relying on chunked encoding.
 		if let Some(h) = builder.headers_mut() {
 			h.remove(header::CONTENT_ENCODING);
-			h.insert(header::CONTENT_LENGTH, bytes.len().into());
+			h.remove(header::CONTENT_LENGTH);
 		}
 
-		builder.body(full(bytes)).map_err(|e| e.to_string())
+		let stream = self
+			.bytes_stream()
+			.map(|r| r.map(Frame::data).map_err(|e| e.to_string()));
+
+		builder.body(BodyExt::boxed(StreamBody::new(stream))).map_err(|e| e.to_string())
 	}
 }
 

@@ -29,17 +29,19 @@ use tokio::net::TcpListener;
 
 use crate::dbg_msg;
 
-/// The unified body type used for all responses.
-pub type Body = BoxBody<Bytes, Infallible>;
+/// Unified response body type. Error is `String` so proxy streams can
+/// propagate upstream failures; `full()`/`empty()` are backed by
+/// `Full`/`Empty<_, Infallible>` and can never produce one.
+pub type Body = BoxBody<Bytes, String>;
 
 /// Create a response body from a string or bytes.
 pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
-	Full::new(chunk.into()).boxed()
+	Full::new(chunk.into()).map_err(|e: Infallible| match e {}).boxed()
 }
 
 /// Create an empty response body.
 pub fn empty() -> Body {
-	Empty::<Bytes>::new().boxed()
+	Empty::<Bytes>::new().map_err(|e: Infallible| match e {}).boxed()
 }
 
 const BANNED_USER_AGENTS: &[&str] = &[
@@ -604,8 +606,8 @@ async fn compress_response(req_headers: &HeaderMap<header::HeaderValue>, res: &m
 	let body_bytes: Vec<u8> = {
 		// Swap body with empty, collect old body
 		let old_body = std::mem::replace(res.body_mut(), empty());
-		// Body error type is Infallible, so collect cannot fail
-		old_body.collect().await.expect("Body<Infallible> collect cannot fail").to_bytes().to_vec()
+		// full/empty bodies cannot produce a String error; only proxy stream bodies can.
+		old_body.collect().await.expect("static response body collection cannot fail").to_bytes().to_vec()
 	};
 
 	// Don't bother compressing tiny responses
