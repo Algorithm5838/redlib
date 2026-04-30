@@ -43,48 +43,6 @@
                 }
             }
 
-            function initializeHls() {
-                newVideo.removeEventListener('play', initializeHls);
-                var hls = new Hls({ autoStartLoad: false });
-                hls.loadSource(playlist);
-                hls.attachMedia(newVideo);
-                hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                    hls.loadLevel = getIndexOfDefault(hls.levels.length);
-                    var availableLevels = hls.levels.map(function(level) {
-                        return {
-                            height: level.height,
-                            width: level.width,
-                            bitrate: level.bitrate,
-                        };
-                    });
-
-                    addQualitySelector(newVideo, hls, availableLevels);
-
-                    hls.startLoad();
-                    newVideo.play();
-                });
-
-                hls.on(Hls.Events.ERROR, function (event, data) {
-                    var errorType = data.type;
-                    var errorFatal = data.fatal;
-                    if (errorFatal) {
-                        switch (errorType) {
-                            case Hls.ErrorType.NETWORK_ERROR:
-                                hls.startLoad();
-                                break;
-                            case Hls.ErrorType.MEDIA_ERROR:
-                                hls.recoverMediaError();
-                                break;
-                            default:
-                                hls.destroy();
-                                break;
-                        }
-                    }
-
-                    console.error("HLS error", data);
-                });
-            }
-
             function addQualitySelector(videoElement, hlsInstance, availableLevels) {
                 var qualitySelector = document.createElement('select');
                 qualitySelector.classList.add('quality-selector');
@@ -109,11 +67,69 @@
                 videoElement.parentNode.appendChild(qualitySelector);
             }
 
-            newVideo.addEventListener('play', initializeHls);
+            // hide manifest latency from play
+            var observer = new IntersectionObserver(function (entries) {
+                if (!entries[0].isIntersecting) return;
+                observer.disconnect();
 
-            if (autoplay) {
-                newVideo.play();
-            }
+                var hls = new Hls({ autoStartLoad: false }); // manifest only; segments deferred until startLoad()
+                hls.loadSource(playlist);
+                hls.attachMedia(newVideo);
+
+                var manifestParsed = false;
+                hls.once(Hls.Events.MANIFEST_PARSED, function () {
+                    hls.loadLevel = getIndexOfDefault(hls.levels.length);
+                    manifestParsed = true;
+                    var availableLevels = hls.levels.map(function (level) {
+                        return {
+                            height: level.height,
+                            width: level.width,
+                            bitrate: level.bitrate,
+                        };
+                    });
+                    addQualitySelector(newVideo, hls, availableLevels);
+                });
+
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    var errorType = data.type;
+                    var errorFatal = data.fatal;
+                    if (errorFatal) {
+                        switch (errorType) {
+                            case Hls.ErrorType.NETWORK_ERROR:
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorType.MEDIA_ERROR:
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                hls.destroy();
+                                break;
+                        }
+                    }
+
+                    console.error("HLS error", data);
+                });
+
+                function whenReady(fn) {
+                    if (manifestParsed) {
+                        fn();
+                    } else {
+                        hls.once(Hls.Events.MANIFEST_PARSED, fn);
+                    }
+                }
+
+                function startPlayback() {
+                    whenReady(function () { hls.startLoad(); newVideo.play(); });
+                }
+
+                if (autoplay) {
+                    startPlayback();
+                } else {
+                    newVideo.addEventListener('play', startPlayback, { once: true });
+                }
+            }, { rootMargin: '200px' });
+
+            observer.observe(newVideo);
         });
     } else {
         var videos = document.querySelectorAll("video.hls_autoplay");
