@@ -40,8 +40,8 @@
 		{% else %}
 		<div class="comment_body {% if highlighted %}highlighted{% endif %}">{{ body|safe }}</div>
 		{% endif %}
-		<blockquote class="replies">{% for c in replies -%}{{ c.render().unwrap()|safe }}{%- endfor %}
-		</blockquote>
+		<div class="replies">{% for c in replies -%}{{ c.render().unwrap()|safe }}{%- endfor %}
+		</div>
 	</details>
 </div>
 {% endif %}
