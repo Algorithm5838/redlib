@@ -66,7 +66,7 @@
 {% macro post(post) -%}
 {% set post_should_be_blurred = post.flags.spoiler && prefs.blur_spoiler=="on" -%}
 <!-- POST CONTENT -->
-<div class="post highlighted{% if post_should_be_blurred %} post_blurred{% endif %}">
+<article class="post highlighted{% if post_should_be_blurred %} post_blurred{% endif %}">
 	<p class="post_header">
 		<a class="post_subreddit" href="/r/{{ post.community }}">r/{{ post.community }}</a>
 		<span class="dot">&bull;</span>
@@ -197,7 +197,7 @@
 		</ul>
 		<p>{{ post.upvote_ratio }}%<span id="upvoted"> Upvoted</span></p>
 	</div>
-</div>
+</article>
 {%- endmacro %}
 
 {% macro external_reddit_link(permalink) %}
